@@ -42,6 +42,18 @@ export interface Account {
 
 interface Vault {
   account: Account | null
+  /**
+   * Remembered session, so an update or a restart does not sign the operator
+   * out. The backup key is derived from the password and cannot be recomputed
+   * without it, so it is kept here rather than forcing a re-login purely to
+   * re-derive it.
+   *
+   * This is safe because the whole vault is encrypted with Electron
+   * safeStorage, which on Windows is DPAPI bound to the OS user account:
+   * another user on the same machine cannot read it, and neither can a copy of
+   * the file taken elsewhere.
+   */
+  session?: { backupKey: string } | undefined
 }
 
 function hashPassword(password: string, salt?: Buffer): string {
@@ -101,6 +113,31 @@ class Auth {
   private path = join(app.getPath('userData'), 'account.dat')
   private vault: Vault | null = null
   private signedIn = false
+
+  /** Restore a remembered session at startup. Returns the backup key, if any. */
+  restoreSession(): Buffer | null {
+    const { account, session } = this.load()
+    if (!account || !session?.backupKey) return null
+    this.signedIn = true
+    return Buffer.from(session.backupKey, 'hex')
+  }
+
+  private remember(backupKey: Buffer): void {
+    const vault = this.load()
+    vault.session = { backupKey: backupKey.toString('hex') }
+    this.persist()
+  }
+
+  private forget(): void {
+    const vault = this.load()
+    vault.session = undefined
+    this.persist()
+  }
+
+  /** Called after a successful sign-in so the session survives a restart. */
+  rememberSession(backupKey: Buffer): void {
+    this.remember(backupKey)
+  }
 
   /**
    * The vault is encrypted at rest with Electron safeStorage, which uses DPAPI
@@ -224,6 +261,7 @@ class Auth {
 
   signOut(): void {
     this.signedIn = false
+    this.forget()
   }
 
   /**
@@ -306,7 +344,7 @@ class Auth {
 
   /** Remove the local account entirely. Irreversible by design. */
   deleteAccount(): void {
-    this.vault = { account: null }
+    this.vault = { account: null, session: undefined }
     this.persist()
     this.signedIn = false
   }

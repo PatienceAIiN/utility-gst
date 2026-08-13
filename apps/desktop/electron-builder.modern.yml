@@ -20,6 +20,10 @@ win:
       arch: [x64]
   artifactName: Utility-Setup-${version}.${ext}
 nsis:
+  # Registers, history, settings and the account vault live in userData. An
+  # update must never touch them, and even an uninstall leaves them: accounting
+  # records are not ours to delete.
+  deleteAppDataOnUninstall: false
   # The same mark on the installer, the uninstaller and the Add/Remove entry --
   # electron-builder does not infer these from win.icon.
   installerIcon: build/icon.ico

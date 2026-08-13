@@ -134,8 +134,14 @@ export async function restoreRemote(name: string): Promise<{ ok: boolean; detail
 }
 
 /** Called on sign-in. Held in memory only -- never written to disk. */
-export function deriveBackupKey(password: string): void {
+export function deriveBackupKey(password: string): Buffer {
   backupKey = scryptSync(password, KEY_SALT, 32, { N: 1 << 15, r: 8, p: 1, maxmem: 256 * 1024 * 1024 })
+  return backupKey
+}
+
+/** Restore a key remembered from a previous session. */
+export function setBackupKey(key: Buffer): void {
+  backupKey = key
 }
 
 export function clearBackupKey(): void {

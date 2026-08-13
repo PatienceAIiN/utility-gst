@@ -13,6 +13,7 @@ import { sidecar } from './sidecar'
 import {
   backendUrl,
   clearBackupKey,
+  setBackupKey,
   deriveBackupKey,
   listRemote,
   restoreRemote,
@@ -388,7 +389,7 @@ function registerIpc(): void {
     const input = SignUp.parse(raw)
     const result = auth.signUp(input)
     if (result.ok) {
-      deriveBackupKey(input.password)
+      auth.rememberSession(deriveBackupKey(input.password))
       if (store.get().consent?.cloudSync === true) {
         void serverSignIn(input.email, input.password, input.name)
       }
@@ -399,7 +400,7 @@ function registerIpc(): void {
     const { email, password } = Credentials.parse(raw)
     const result = auth.signIn(email, password)
     if (result.ok) {
-      deriveBackupKey(password)
+      auth.rememberSession(deriveBackupKey(password))
       // If cloud backup is on, establish the server session here so the
       // operator never sees or configures anything about a backend.
       if (store.get().consent?.cloudSync === true) {
@@ -465,7 +466,7 @@ function registerIpc(): void {
       return { ok: false, error: 'No connection. Verifying a code needs the internet.' }
     }
     const result = auth.resetVerified(email, password)
-    if (result.ok) deriveBackupKey(password)
+    if (result.ok) auth.rememberSession(deriveBackupKey(password))
     return result
   })
 
@@ -481,7 +482,7 @@ function registerIpc(): void {
   ipcMain.handle('auth:changePassword', (_event, raw: unknown) => {
     const { current, next } = ChangePassword.parse(raw)
     const result = auth.changePassword(current, next)
-    if (result.ok) deriveBackupKey(next)
+    if (result.ok) auth.rememberSession(deriveBackupKey(next))
     return result
   })
 
@@ -631,6 +632,9 @@ function registerIpc(): void {
 app.whenReady().then(() => {
   registerIpc()
   installCrashHandlers()
+  // Stay signed in across restarts and updates.
+  const remembered = auth.restoreSession()
+  if (remembered) setBackupKey(remembered)
   buildMenu()
   showSplash()
   sidecar.start()
