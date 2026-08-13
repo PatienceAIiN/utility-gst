@@ -103,8 +103,7 @@ export default function Invoices({
 
   return (
     <Section
-      title="Invoices"
-      subtitle="Import invoices, check what was read, then export the register."
+      title=""
       action={
         invoices.length > 0 ? (
           <Button

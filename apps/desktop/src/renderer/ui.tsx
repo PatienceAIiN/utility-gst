@@ -38,17 +38,19 @@ export function Section({
   return (
     <Fade in timeout={280}>
       <Box sx={{ mb: 4 }}>
-        <Stack direction="row" alignItems="flex-start" sx={{ mb: 2 }}>
-          <Box sx={{ flexGrow: 1 }}>
-            <Typography variant="h6">{title}</Typography>
-            {subtitle && (
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
-                {subtitle}
-              </Typography>
-            )}
-          </Box>
-          {action}
-        </Stack>
+        {(title || subtitle || action) && (
+          <Stack direction="row" alignItems="flex-start" sx={{ mb: 2 }}>
+            <Box sx={{ flexGrow: 1 }}>
+              {title && <Typography variant="h6">{title}</Typography>}
+              {subtitle && (
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
+                  {subtitle}
+                </Typography>
+              )}
+            </Box>
+            {action}
+          </Stack>
+        )}
         {children}
       </Box>
     </Fade>
