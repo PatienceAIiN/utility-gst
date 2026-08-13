@@ -167,9 +167,8 @@ export function FeedbackDialog({
       <DialogTitle>Send feedback</DialogTitle>
       <DialogContent>
         {state === 'queued' ? (
-          <Alert severity="success" sx={{ mb: 1 }}>
-            Saved. It will be delivered once the account server is connected — nothing is sent
-            anywhere until then.
+          <Alert severity={detail ? 'info' : 'success'} sx={{ mb: 1 }}>
+            {detail || 'Thank you — your feedback has been sent.'}
           </Alert>
         ) : (
           <Stack spacing={2} sx={{ mt: 0.5 }}>
@@ -224,11 +223,12 @@ export function FeedbackDialog({
             onClick={async () => {
               setState('sending')
               const result = await window.api.feedback.send(kind, message.trim(), email.trim())
-              if (result.status === 'queued') setState('queued')
-              else {
-                setDetail(result.error ?? 'Could not save feedback')
-                setState('failed')
-              }
+              setDetail(
+                result.status === 'queued'
+                  ? 'Saved on this computer and will be sent automatically once you are back online.'
+                  : ''
+              )
+              setState('queued')
             }}
           >
             Send

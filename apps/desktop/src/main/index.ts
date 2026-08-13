@@ -1,10 +1,11 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
-import { appendFileSync, mkdirSync } from 'node:fs'
+import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { z } from 'zod'
 import { auth } from './auth'
 import { history } from './history'
 import { buildMenu } from './menu'
+import { flushOutbox, installCrashHandlers, reportError, sendFeedback } from './telemetry'
 import { mesh, type Permission } from './mesh'
 import { check as checkUpdates, currentState, initUpdater, installNow } from './updater'
 import { baseDir, layoutPreview, outputDir } from './paths'
@@ -128,6 +129,9 @@ function createWindow(): void {
   })
   window.webContents.on('will-navigate', (event) => event.preventDefault())
   window.webContents.on('did-fail-load', () => closeSplash())
+  window.webContents.on('render-process-gone', (_e, details) =>
+    reportError('renderer-gone', details.reason)
+  )
 
   window.on('close', (event) => {
     if (quitConfirmed) return
@@ -469,25 +473,9 @@ function registerIpc(): void {
   )
 
   // --- feedback ---
-  ipcMain.handle('feedback:send', (_event, raw: unknown) => {
+  ipcMain.handle('feedback:send', async (_event, raw: unknown) => {
     const value = Feedback.parse(raw)
-    // Server delivery is not wired yet. Rather than pretend it sent, queue it
-    // durably and tell the UI it is pending.
-    const queue = join(app.getPath('userData'), 'feedback-queue.jsonl')
-    try {
-      const line = JSON.stringify({
-        ...value,
-        at: new Date().toISOString(),
-        version: app.getVersion()
-      })
-      appendFileSync(queue, line + '\n', 'utf8')
-      return { status: 'queued' as const, queue }
-    } catch (error) {
-      return {
-        status: 'failed' as const,
-        error: error instanceof Error ? error.message : 'Could not save feedback'
-      }
-    }
+    return sendFeedback(value.kind, value.message, value.email ?? '')
   })
 
   // --- updates ---
@@ -509,11 +497,14 @@ function registerIpc(): void {
 
 app.whenReady().then(() => {
   registerIpc()
+  installCrashHandlers()
   buildMenu()
   showSplash()
   sidecar.start()
   createWindow()
   initUpdater()
+  // Deliver anything that could not be sent while offline.
+  setTimeout(() => void flushOutbox(), 8000)
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })

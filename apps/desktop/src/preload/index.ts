@@ -247,7 +247,7 @@ const api = {
       kind: 'bug' | 'idea' | 'other',
       message: string,
       email: string
-    ): Promise<{ status: 'queued' | 'failed'; queue?: string; error?: string }> =>
+    ): Promise<{ status: 'sent' | 'queued'; pending?: number }> =>
       ipcRenderer.invoke('feedback:send', { kind, message, email })
   },
   updates: {
