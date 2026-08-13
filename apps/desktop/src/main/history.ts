@@ -2,6 +2,7 @@ import { app } from 'electron'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { auth } from './auth'
 
 /**
  * Durable record of every file processed.
@@ -17,6 +18,12 @@ import { randomUUID } from 'node:crypto'
 
 export interface HistoryRecord {
   id: string
+  /**
+   * Which account created this record. Records are visible only to their owner.
+   * Two people sharing a computer must not see each other's invoices, and an
+   * unauthenticated session must not see a signed-in user's data.
+   */
+  ownerId: string
   sourceFile: string
   sha256: string
   invoiceNo: string | null
@@ -76,6 +83,15 @@ class History {
     }
   }
 
+  /** Current owner scope. Signed out is its own bucket, not a wildcard. */
+  private owner(): string {
+    return auth.status().account?.id ?? 'local'
+  }
+
+  private mine(record: HistoryRecord): boolean {
+    return record.ownerId === this.owner()
+  }
+
   /** Append-only. Holds no amounts in the message, only in the value snapshots. */
   private audit(action: AuditAction, id: string, before: unknown, after: unknown): void {
     try {
@@ -94,6 +110,7 @@ class History {
     return (
       this.load().find(
         (r) =>
+          this.mine(r) &&
           !r.deletedAt &&
           (r.sha256 === sha256 ||
             (invoiceNo !== null && r.invoiceNo === invoiceNo && r.gstin === gstin))
@@ -101,8 +118,13 @@ class History {
     )
   }
 
-  add(record: Omit<HistoryRecord, 'id' | 'parsedAt'>): HistoryRecord {
-    const full: HistoryRecord = { ...record, id: randomUUID(), parsedAt: new Date().toISOString() }
+  add(record: Omit<HistoryRecord, 'id' | 'parsedAt' | 'ownerId'>): HistoryRecord {
+    const full: HistoryRecord = {
+      ...record,
+      id: randomUUID(),
+      ownerId: this.owner(),
+      parsedAt: new Date().toISOString()
+    }
     this.load().unshift(full)
     this.persist()
     this.audit('create', full.id, null, full)
@@ -119,7 +141,9 @@ class History {
     const pageSize = Math.min(200, Math.max(5, options.pageSize ?? 25))
     const needle = (options.query ?? '').trim().toLowerCase()
 
-    let items = this.load().filter((r) => (options.includeDeleted ? true : !r.deletedAt))
+    let items = this.load()
+      .filter((r) => this.mine(r))
+      .filter((r) => (options.includeDeleted ? true : !r.deletedAt))
     if (needle) {
       items = items.filter((r) =>
         [r.sourceFile, r.invoiceNo, r.party, r.gstin]
@@ -133,7 +157,9 @@ class History {
   }
 
   get(id: string): HistoryRecord | null {
-    return this.load().find((r) => r.id === id) ?? null
+    const found = this.load().find((r) => r.id === id)
+    // Filtering only the list would leave every record readable by id.
+    return found && this.mine(found) ? found : null
   }
 
   update(
@@ -141,7 +167,9 @@ class History {
     patch: { note?: string | undefined; invoiceNo?: string | undefined; party?: string | undefined }
   ): HistoryRecord | null {
     const records = this.load()
-    const index = records.findIndex((r) => r.id === id)
+    // Ownership is enforced on the lookup itself: scoping only the list would
+    // leave every record mutable by anyone who knows its id.
+    const index = records.findIndex((r) => r.id === id && this.mine(r))
     if (index < 0) return null
     const before = { ...records[index]! }
     // Assign only the keys actually supplied. Spreading the patch would widen
@@ -158,7 +186,9 @@ class History {
 
   remove(id: string): HistoryRecord | null {
     const records = this.load()
-    const index = records.findIndex((r) => r.id === id)
+    // Ownership is enforced on the lookup itself: scoping only the list would
+    // leave every record mutable by anyone who knows its id.
+    const index = records.findIndex((r) => r.id === id && this.mine(r))
     if (index < 0) return null
     const before = { ...records[index]! }
     if (before.deletedAt) return before
@@ -171,7 +201,9 @@ class History {
 
   restore(id: string): HistoryRecord | null {
     const records = this.load()
-    const index = records.findIndex((r) => r.id === id)
+    // Ownership is enforced on the lookup itself: scoping only the list would
+    // leave every record mutable by anyone who knows its id.
+    const index = records.findIndex((r) => r.id === id && this.mine(r))
     if (index < 0) return null
     const before = { ...records[index]! }
     const after = { ...before }
@@ -185,7 +217,7 @@ class History {
   recordExport(ids: string[], exportPath: string): void {
     const records = this.load()
     for (const id of ids) {
-      const index = records.findIndex((r) => r.id === id)
+      const index = records.findIndex((r) => r.id === id && this.mine(r))
       if (index < 0) continue
       const before = { ...records[index]! }
       records[index] = { ...before, exportPath }

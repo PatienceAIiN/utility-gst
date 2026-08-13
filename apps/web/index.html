@@ -8,11 +8,9 @@
 <!-- Cache-busting is handled by the deploy script stamping ?v= on assets. -->
 <style>
   :root{
-    --bg:#0b1017; --panel:#121a24; --line:rgba(255,255,255,.09);
-    --ink:#e8eef8; --muted:#93a1b5; --brand:#7aa2f7; --ok:#34c77b;
-  }
-  @media (prefers-color-scheme: light){
-    :root{--bg:#f6f8fc;--panel:#fff;--line:rgba(16,24,40,.10);--ink:#0e1726;--muted:#5b6779;--brand:#0b57d0}
+    color-scheme: light;
+    --bg:#f7f9fc; --panel:#ffffff; --line:rgba(16,24,40,.11);
+    --ink:#0e1726; --muted:#5b6779; --brand:#0b57d0; --ok:#0f7a4d;
   }
   *{box-sizing:border-box}
   html,body{margin:0;background:var(--bg);color:var(--ink);
@@ -23,13 +21,13 @@
     background:color-mix(in srgb,var(--bg) 82%,transparent);border-bottom:1px solid var(--line);z-index:10}
   .nav{display:flex;align-items:center;gap:14px;padding:14px 0}
   .logo{display:flex;align-items:center;gap:10px;font-weight:680;letter-spacing:-.02em}
-  .mark{width:32px;height:32px;border-radius:9px;background:#0d1117;display:grid;place-items:center;flex:0 0 auto}
+  .mark{width:32px;height:32px;border-radius:9px;background:#111827;display:grid;place-items:center;flex:0 0 auto}
   .mark i{display:block;width:17px;height:19px;border-radius:3px;background:#f0f6fc}
   .spacer{flex:1}
   .btn{display:inline-block;border:0;border-radius:10px;padding:11px 18px;font:inherit;font-weight:620;
     cursor:pointer;text-decoration:none;transition:transform .14s ease,opacity .18s ease}
   .btn:active{transform:scale(.985)}
-  .btn-primary{background:var(--brand);color:#04101f}
+  .btn-primary{background:var(--brand);color:#fff}
   .btn-ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}
   h1{font-size:clamp(30px,5vw,50px);line-height:1.1;letter-spacing:-.03em;margin:0 0 16px}
   h2{font-size:clamp(21px,3vw,29px);letter-spacing:-.02em;margin:0 0 12px}
@@ -50,11 +48,11 @@
   input:focus{outline:2px solid var(--brand);outline-offset:1px}
   .msg{margin-top:14px;padding:11px 13px;border-radius:10px;font-size:14px;display:none}
   .msg.ok{display:block;background:color-mix(in srgb,var(--ok) 16%,transparent);color:var(--ok)}
-  .msg.err{display:block;background:rgba(255,120,110,.14);color:#ff9a90}
+  .msg.err{display:block;background:rgba(179,38,30,.10);color:#b3261e}
   .tabs{display:flex;gap:6px;margin-bottom:6px}
   .tab{flex:1;padding:9px;border-radius:9px;border:1px solid var(--line);background:transparent;
     color:var(--muted);font:inherit;font-weight:600;cursor:pointer}
-  .tab[aria-selected=true]{background:var(--brand);color:#04101f;border-color:transparent}
+  .tab[aria-selected=true]{background:var(--brand);color:#fff;border-color:transparent}
   footer{padding:34px 0;color:var(--muted);font-size:13.5px}
   .fine{color:var(--muted);font-size:12.5px;margin-top:12px}
 
