@@ -139,6 +139,7 @@ def startup() -> None:
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     with db() as conn:
         conn.execute(SCHEMA)
+        conn.execute(ADMIN_SCHEMA)
 
 
 def log(account_id: str | None, action: str, detail: str = "") -> None:
@@ -384,3 +385,268 @@ def mail_test(authorization: Annotated[str | None, Header()] = None) -> dict[str
     )
     log(None, "mail_test", detail)
     return {"ok": ok, "detail": detail}
+
+
+# --- admin panel ------------------------------------------------------------
+# Separate credential, separate session, separate surface from user accounts.
+# The password is never stored: ADMIN_PASSWORD_HASH holds a scrypt digest, so a
+# leak of the env file does not hand over the panel.
+ADMIN_USER = os.environ.get("UTILITY_ADMIN_USER", "admin")
+ADMIN_PASSWORD_HASH = os.environ.get("UTILITY_ADMIN_PASSWORD_HASH", "")
+ADMIN_TTL = timedelta(hours=8)
+
+ADMIN_SCHEMA = """
+CREATE TABLE IF NOT EXISTS admin_sessions (
+  token      text PRIMARY KEY,
+  issued_at  timestamptz NOT NULL DEFAULT now(),
+  expires_at timestamptz NOT NULL,
+  ip         text
+);
+CREATE TABLE IF NOT EXISTS errors (
+  id         bigserial PRIMARY KEY,
+  account_id uuid,
+  kind       text NOT NULL,
+  message    text NOT NULL,
+  version    text,
+  at         timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS errors_at_idx ON errors (at DESC);
+"""
+
+
+def admin_guard(request: Request) -> None:
+    token = request.cookies.get("utility_admin", "")
+    if not token:
+        raise HTTPException(401, "Sign in required.")
+    with db() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM admin_sessions WHERE token = %s AND expires_at > %s", (token, now())
+        ).fetchone()
+    if not row:
+        raise HTTPException(401, "Session expired.")
+
+
+class AdminLogin(BaseModel):
+    username: str = Field(max_length=120)
+    password: str = Field(max_length=1024)
+
+
+@app.post("/v1/admin/login")
+def admin_login(body: AdminLogin, request: Request, response: Response) -> dict[str, bool]:
+    ip = client_ip(request)
+    # Tight limit: this is the highest-value endpoint on the service.
+    rate_limit(f"adminlogin:{ip}", limit=8, window_seconds=900)
+    if not ADMIN_PASSWORD_HASH:
+        raise HTTPException(503, "Admin access is not configured.")
+    ok = body.username == ADMIN_USER and verify_password(body.password, ADMIN_PASSWORD_HASH)
+    if not ok:
+        log(None, "admin_login_failed", ip)
+        raise HTTPException(401, "Incorrect username or password.")
+    token = secrets.token_urlsafe(48)
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO admin_sessions (token, expires_at, ip) VALUES (%s, %s, %s)",
+            (token, now() + ADMIN_TTL, ip),
+        )
+    response.set_cookie(
+        "utility_admin", token,
+        httponly=True, secure=True, samesite="strict",
+        max_age=int(ADMIN_TTL.total_seconds()), path="/",
+    )
+    log(None, "admin_login", ip)
+    return {"ok": True}
+
+
+@app.post("/v1/admin/logout")
+def admin_logout(request: Request, response: Response) -> dict[str, bool]:
+    token = request.cookies.get("utility_admin", "")
+    if token:
+        with db() as conn:
+            conn.execute("DELETE FROM admin_sessions WHERE token = %s", (token,))
+    response.delete_cookie("utility_admin", path="/")
+    return {"ok": True}
+
+
+@app.get("/v1/admin/overview")
+def admin_overview(request: Request) -> dict[str, object]:
+    admin_guard(request)
+    with db() as conn:
+        counts = {
+            name: conn.execute(f"SELECT count(*) FROM {name}").fetchone()[0]
+            for name in ("accounts", "backups", "feedback", "errors", "activity")
+        }
+        recent = conn.execute(
+            "SELECT count(*) FROM activity WHERE at > %s", (now() - timedelta(days=1),)
+        ).fetchone()[0]
+        storage = conn.execute("SELECT coalesce(sum(bytes),0) FROM backups").fetchone()[0]
+        failed = conn.execute(
+            "SELECT count(*) FROM activity WHERE action = 'admin_login_failed' AND at > %s",
+            (now() - timedelta(days=7),),
+        ).fetchone()[0]
+    return {
+        "counts": counts,
+        "activity24h": recent,
+        "backupBytes": int(storage),
+        "failedAdminLogins7d": failed,
+        "mailConfigured": bool(BREVO_API_KEY),
+    }
+
+
+@app.get("/v1/admin/users")
+def admin_users(request: Request, q: str = "", limit: int = 100) -> dict[str, object]:
+    admin_guard(request)
+    like = f"%{q.strip().lower()}%"
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT a.id, a.email, a.name, a.org, a.gstin, a.created_at, a.last_login_at,"
+            " (SELECT count(*) FROM backups b WHERE b.account_id = a.id),"
+            " (SELECT coalesce(sum(b.bytes),0) FROM backups b WHERE b.account_id = a.id)"
+            " FROM accounts a"
+            " WHERE (%s = '' OR lower(a.email) LIKE %s OR lower(a.name) LIKE %s)"
+            " ORDER BY a.created_at DESC LIMIT %s",
+            (q.strip(), like, like, min(500, max(1, limit))),
+        ).fetchall()
+    return {
+        "items": [
+            {
+                "id": str(r[0]), "email": r[1], "name": r[2], "org": r[3], "gstin": r[4],
+                "createdAt": r[5].isoformat(), "lastLoginAt": r[6].isoformat() if r[6] else None,
+                "backups": r[7], "backupBytes": int(r[8]),
+            }
+            for r in rows
+        ]
+    }
+
+
+class AdminUserPatch(BaseModel):
+    name: str | None = Field(default=None, max_length=200)
+    org: str | None = Field(default=None, max_length=200)
+    gstin: str | None = Field(default=None, max_length=20)
+
+
+@app.patch("/v1/admin/users/{user_id}")
+def admin_update_user(user_id: str, body: AdminUserPatch, request: Request) -> dict[str, bool]:
+    admin_guard(request)
+    fields = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not fields:
+        return {"ok": True}
+    sets = ", ".join(f"{k} = %s" for k in fields)
+    with db() as conn:
+        conn.execute(f"UPDATE accounts SET {sets} WHERE id = %s", (*fields.values(), user_id))
+    log(user_id, "admin_user_edit", ",".join(fields))
+    return {"ok": True}
+
+
+@app.delete("/v1/admin/users/{user_id}")
+def admin_delete_user(user_id: str, request: Request) -> dict[str, bool]:
+    admin_guard(request)
+    # Deleting an account also removes its stored backups from disk. Leaving
+    # encrypted blobs behind after a deletion request would defeat the point.
+    directory = BACKUP_DIR / user_id
+    if directory.is_dir():
+        for item in directory.glob("*"):
+            item.unlink(missing_ok=True)
+        directory.rmdir()
+    with db() as conn:
+        conn.execute("DELETE FROM accounts WHERE id = %s", (user_id,))
+    log(None, "admin_user_delete", user_id)
+    return {"ok": True}
+
+
+@app.get("/v1/admin/activity")
+def admin_activity(request: Request, limit: int = 200, action: str = "") -> dict[str, object]:
+    admin_guard(request)
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT id, account_id, action, detail, at FROM activity"
+            " WHERE (%s = '' OR action = %s) ORDER BY at DESC LIMIT %s",
+            (action, action, min(1000, max(1, limit))),
+        ).fetchall()
+    return {
+        "items": [
+            {"id": r[0], "accountId": str(r[1]) if r[1] else None,
+             "action": r[2], "detail": r[3], "at": r[4].isoformat()}
+            for r in rows
+        ]
+    }
+
+
+@app.get("/v1/admin/errors")
+def admin_errors(request: Request, limit: int = 200) -> dict[str, object]:
+    admin_guard(request)
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT id, account_id, kind, message, version, at FROM errors ORDER BY at DESC LIMIT %s",
+            (min(1000, max(1, limit)),),
+        ).fetchall()
+    return {
+        "items": [
+            {"id": r[0], "accountId": str(r[1]) if r[1] else None, "kind": r[2],
+             "message": r[3], "version": r[4], "at": r[5].isoformat()}
+            for r in rows
+        ]
+    }
+
+
+@app.get("/v1/admin/feedback")
+def admin_feedback(request: Request, limit: int = 200) -> dict[str, object]:
+    admin_guard(request)
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT id, kind, message, email, version, at FROM feedback ORDER BY at DESC LIMIT %s",
+            (min(1000, max(1, limit)),),
+        ).fetchall()
+    return {
+        "items": [
+            {"id": r[0], "kind": r[1], "message": r[2], "email": r[3],
+             "version": r[4], "at": r[5].isoformat()}
+            for r in rows
+        ]
+    }
+
+
+@app.get("/v1/admin/backups")
+def admin_backups(request: Request, limit: int = 200) -> dict[str, object]:
+    admin_guard(request)
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT b.id, b.account_id, a.email, b.name, b.bytes, b.at"
+            " FROM backups b LEFT JOIN accounts a ON a.id = b.account_id"
+            " ORDER BY b.at DESC LIMIT %s",
+            (min(1000, max(1, limit)),),
+        ).fetchall()
+    # Contents are never exposed: they are encrypted client-side and the server
+    # cannot read them. Metadata only.
+    return {
+        "items": [
+            {"id": r[0], "accountId": str(r[1]), "email": r[2], "name": r[3],
+             "bytes": r[4], "at": r[5].isoformat()}
+            for r in rows
+        ]
+    }
+
+
+class ErrorReport(BaseModel):
+    kind: str = Field(max_length=60)
+    message: str = Field(max_length=4000)
+    version: str | None = Field(default=None, max_length=40)
+
+
+@app.post("/v1/errors")
+def report_error(body: ErrorReport, request: Request) -> dict[str, bool]:
+    """Crash and error reports from the app. Opt-in via the diagnostics consent."""
+    rate_limit(f"errors:{client_ip(request)}", limit=40, window_seconds=3600)
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO errors (kind, message, version) VALUES (%s, %s, %s)",
+            (body.kind, body.message, body.version),
+        )
+    return {"ok": True}
+
+
+@app.get("/admin")
+def admin_page() -> Response:
+    page = Path(__file__).with_name("admin.html")
+    if not page.is_file():
+        raise HTTPException(404, "Admin panel not installed.")
+    return Response(page.read_text(encoding="utf-8"), media_type="text/html")

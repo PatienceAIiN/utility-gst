@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<meta name="robots" content="noindex,nofollow" />
+<title>Utility — Admin</title>
+<style>
+  :root{--bg:#0b1017;--panel:#121a24;--line:rgba(255,255,255,.09);--ink:#e8eef8;
+        --muted:#93a1b5;--brand:#7aa2f7;--ok:#34c77b;--bad:#ff8a80;--warn:#ffcf70}
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:"Segoe UI",Inter,Roboto,system-ui,sans-serif;font-size:14.5px;line-height:1.55}
+  .bar{display:flex;align-items:center;gap:14px;padding:13px 22px;
+       border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:5}
+  .brand{font-weight:680;letter-spacing:-.02em}
+  .tag{font-size:11.5px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:3px 10px}
+  .sp{flex:1}
+  button{font:inherit;border:0;border-radius:9px;padding:8px 14px;cursor:pointer;font-weight:600}
+  .p{background:var(--brand);color:#04101f}
+  .g{background:transparent;color:var(--ink);border:1px solid var(--line)}
+  .d{background:transparent;color:var(--bad);border:1px solid rgba(255,138,128,.4)}
+  main{padding:22px;max-width:1240px;margin:0 auto}
+  .tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:20px}
+  .tabs button[aria-selected=true]{background:var(--brand);color:#04101f}
+  .cards{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));margin-bottom:24px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px}
+  .card .n{font-size:26px;font-weight:680;letter-spacing:-.02em}
+  .card .l{font-size:12.5px;color:var(--muted)}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+  table{border-collapse:collapse;width:100%;font-size:13.5px}
+  th,td{text-align:left;padding:10px 13px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-weight:650;background:rgba(255,255,255,.03);position:sticky;top:0}
+  tr:last-child td{border-bottom:0}
+  .scroll{max-height:62vh;overflow:auto}
+  input,select{background:var(--bg);color:var(--ink);border:1px solid var(--line);
+    border-radius:9px;padding:8px 11px;font:inherit}
+  .mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;color:var(--muted)}
+  .pill{display:inline-block;border-radius:999px;padding:2px 9px;font-size:11.5px;border:1px solid var(--line)}
+  .ok{color:var(--ok)} .bad{color:var(--bad)} .warn{color:var(--warn)}
+  .login{max-width:360px;margin:12vh auto;background:var(--panel);
+    border:1px solid var(--line);border-radius:16px;padding:26px}
+  .login h1{font-size:19px;margin:0 0 4px} .login p{margin:0 0 18px;color:var(--muted);font-size:13px}
+  .login input{width:100%;margin-bottom:12px}
+  .msg{margin-top:12px;font-size:13px;min-height:18px}
+  .row{display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap}
+  .hide{display:none}
+</style>
+</head>
+<body>
+
+<div id="login" class="login">
+  <h1>Utility Admin</h1>
+  <p>Operations and monitoring.</p>
+  <input id="u" placeholder="Username" autocomplete="username" />
+  <input id="p" type="password" placeholder="Password" autocomplete="current-password" />
+  <button class="p" style="width:100%" onclick="signIn()">Sign in</button>
+  <div class="msg bad" id="lmsg"></div>
+</div>
+
+<div id="app" class="hide">
+  <div class="bar">
+    <span class="brand">Utility Admin</span>
+    <span class="tag" id="mail">—</span>
+    <span class="sp"></span>
+    <button class="g" onclick="loadAll()">Refresh</button>
+    <button class="g" onclick="signOut()">Sign out</button>
+  </div>
+  <main>
+    <div class="cards" id="stats"></div>
+    <div class="tabs" id="tabs"></div>
+    <div class="row" id="filters"></div>
+    <div class="panel"><div class="scroll"><table id="tbl"></table></div></div>
+  </main>
+</div>
+
+<script>
+'use strict';
+var API = '/utility-api';
+var tab = 'users';
+var TABS = [
+  ['users','Users'], ['activity','Activity log'], ['errors','Errors'],
+  ['feedback','Feedback'], ['backups','Backups']
+];
+
+function api(path, options) {
+  options = options || {};
+  options.credentials = 'same-origin';
+  options.headers = Object.assign({'content-type':'application/json'}, options.headers||{});
+  return fetch(API + path, options).then(function (r) {
+    if (r.status === 401) { showLogin(); throw new Error('Session expired'); }
+    return r.json().then(function (d) {
+      if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+      return d;
+    });
+  });
+}
+function esc(v){ return String(v==null?'':v).replace(/[&<>"]/g,function(c){
+  return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+function when(s){ return s ? new Date(s).toLocaleString() : '—'; }
+function kb(n){ return n < 1024 ? n+' B' : n < 1048576 ? (n/1024).toFixed(1)+' KB' : (n/1048576).toFixed(1)+' MB'; }
+
+function showLogin(){ document.getElementById('login').classList.remove('hide');
+                      document.getElementById('app').classList.add('hide'); }
+function showApp(){ document.getElementById('login').classList.add('hide');
+                    document.getElementById('app').classList.remove('hide'); loadAll(); }
+
+function signIn(){
+  var msg = document.getElementById('lmsg'); msg.textContent = 'Checking…';
+  api('/v1/admin/login', {method:'POST', body: JSON.stringify({
+    username: document.getElementById('u').value, password: document.getElementById('p').value })})
+    .then(function(){ msg.textContent=''; document.getElementById('p').value=''; showApp(); })
+    .catch(function(e){ msg.textContent = e.message; });
+}
+function signOut(){ api('/v1/admin/logout',{method:'POST'}).finally(showLogin); }
+
+function renderTabs(){
+  document.getElementById('tabs').innerHTML = TABS.map(function(t){
+    return '<button class="g" aria-selected="'+(tab===t[0])+'" onclick="setTab(\''+t[0]+'\')">'+t[1]+'</button>';
+  }).join('');
+}
+function setTab(t){ tab = t; renderTabs(); loadTable(); }
+
+function loadAll(){
+  renderTabs();
+  api('/v1/admin/overview').then(function(o){
+    var c = o.counts;
+    document.getElementById('mail').textContent = o.mailConfigured ? 'Mail configured' : 'Mail not configured';
+    document.getElementById('mail').className = 'tag ' + (o.mailConfigured ? 'ok' : 'warn');
+    document.getElementById('stats').innerHTML = [
+      ['Users', c.accounts], ['Backups', c.backups], ['Stored', kb(o.backupBytes)],
+      ['Activity 24h', o.activity24h], ['Errors', c.errors], ['Feedback', c.feedback],
+      ['Failed admin logins 7d', o.failedAdminLogins7d]
+    ].map(function(s){
+      var bad = s[0].indexOf('Failed') === 0 && s[1] > 0;
+      return '<div class="card"><div class="n'+(bad?' bad':'')+'">'+esc(s[1])+'</div><div class="l">'+s[0]+'</div></div>';
+    }).join('');
+  }).catch(function(){});
+  loadTable();
+}
+
+function loadTable(){
+  var f = document.getElementById('filters');
+  f.innerHTML = tab === 'users'
+    ? '<input id="q" placeholder="Search email or name" oninput="loadTable()" />'
+    : (tab === 'activity' ? '<input id="q" placeholder="Filter by action (exact)" oninput="loadTable()" />' : '');
+  var q = (document.getElementById('q') || {}).value || '';
+  var path = tab === 'users' ? '/v1/admin/users?q=' + encodeURIComponent(q)
+           : tab === 'activity' ? '/v1/admin/activity?action=' + encodeURIComponent(q)
+           : '/v1/admin/' + tab;
+  api(path).then(function(d){ render(d.items || []); }).catch(function(e){
+    document.getElementById('tbl').innerHTML = '<tr><td class="bad">'+esc(e.message)+'</td></tr>';
+  });
+}
+
+function render(items){
+  var t = document.getElementById('tbl');
+  if (!items.length) { t.innerHTML = '<tr><td style="color:var(--muted)">Nothing to show.</td></tr>'; return; }
+  if (tab === 'users') {
+    t.innerHTML = '<thead><tr><th>Email</th><th>Name</th><th>Org</th><th>Backups</th>'
+      + '<th>Created</th><th>Last sign-in</th><th></th></tr></thead><tbody>'
+      + items.map(function(u){
+        return '<tr><td>'+esc(u.email)+'<div class="mono">'+esc(u.id)+'</div></td>'
+          + '<td><input value="'+esc(u.name)+'" id="n_'+u.id+'" style="width:130px" /></td>'
+          + '<td><input value="'+esc(u.org||'')+'" id="o_'+u.id+'" style="width:130px" /></td>'
+          + '<td>'+u.backups+'<div class="mono">'+kb(u.backupBytes)+'</div></td>'
+          + '<td>'+when(u.createdAt)+'</td><td>'+when(u.lastLoginAt)+'</td>'
+          + '<td style="white-space:nowrap"><button class="g" onclick="saveUser(\''+u.id+'\')">Save</button> '
+          + '<button class="d" onclick="delUser(\''+u.id+'\',\''+esc(u.email)+'\')">Delete</button></td></tr>';
+      }).join('') + '</tbody>';
+  } else if (tab === 'activity') {
+    t.innerHTML = '<thead><tr><th>When</th><th>Action</th><th>Detail</th><th>Account</th></tr></thead><tbody>'
+      + items.map(function(a){
+        var bad = a.action.indexOf('failed') !== -1;
+        return '<tr><td>'+when(a.at)+'</td><td><span class="pill'+(bad?' bad':'')+'">'+esc(a.action)+'</span></td>'
+          + '<td>'+esc(a.detail)+'</td><td class="mono">'+esc(a.accountId||'—')+'</td></tr>';
+      }).join('') + '</tbody>';
+  } else if (tab === 'errors') {
+    t.innerHTML = '<thead><tr><th>When</th><th>Kind</th><th>Message</th><th>Version</th></tr></thead><tbody>'
+      + items.map(function(e){
+        return '<tr><td>'+when(e.at)+'</td><td class="bad">'+esc(e.kind)+'</td>'
+          + '<td>'+esc(e.message)+'</td><td class="mono">'+esc(e.version||'—')+'</td></tr>';
+      }).join('') + '</tbody>';
+  } else if (tab === 'feedback') {
+    t.innerHTML = '<thead><tr><th>When</th><th>Type</th><th>Message</th><th>Reply to</th><th>Version</th></tr></thead><tbody>'
+      + items.map(function(f){
+        return '<tr><td>'+when(f.at)+'</td><td><span class="pill">'+esc(f.kind)+'</span></td>'
+          + '<td>'+esc(f.message)+'</td><td>'+esc(f.email||'—')+'</td><td class="mono">'+esc(f.version||'—')+'</td></tr>';
+      }).join('') + '</tbody>';
+  } else {
+    t.innerHTML = '<thead><tr><th>When</th><th>User</th><th>File</th><th>Size</th></tr></thead><tbody>'
+      + items.map(function(b){
+        return '<tr><td>'+when(b.at)+'</td><td>'+esc(b.email||'—')+'</td>'
+          + '<td class="mono">'+esc(b.name)+'</td><td>'+kb(b.bytes)+'</td></tr>';
+      }).join('') + '</tbody>';
+  }
+}
+
+function saveUser(id){
+  api('/v1/admin/users/'+id, {method:'PATCH', body: JSON.stringify({
+    name: document.getElementById('n_'+id).value,
+    org: document.getElementById('o_'+id).value })})
+    .then(function(){ loadTable(); }).catch(function(e){ alert(e.message); });
+}
+function delUser(id, email){
+  if (!confirm('Delete ' + email + '?\n\nThis removes the account and every backup stored for it. It cannot be undone.')) return;
+  api('/v1/admin/users/'+id, {method:'DELETE'})
+    .then(function(){ loadAll(); }).catch(function(e){ alert(e.message); });
+}
+
+document.addEventListener('keydown', function(e){
+  if (e.key === 'Enter' && !document.getElementById('login').classList.contains('hide')) signIn();
+});
+// Probe an authenticated endpoint to decide which view to show on load.
+api('/v1/admin/overview').then(showApp).catch(showLogin);
+</script>
+</body>
+</html>

@@ -103,7 +103,11 @@ jobs:
           npm run build
           $ErrorActionPreference = 'Continue'
           for ($i = 1; $i -le 3; $i++) {
-            npx electron-builder --win --config electron-builder.${{ matrix.channel }}.yml
+            # --publish never: the publish config exists so electron-updater
+            # metadata (latest.yml / blockmap) is generated, but uploading is the
+            # release job's responsibility. Without this, packaging tries to push
+            # to GitHub with no token and fails on every retry.
+            npx electron-builder --win --publish never --config electron-builder.${{ matrix.channel }}.yml
             if ($LASTEXITCODE -eq 0) { exit 0 }
             Write-Host "::warning::packaging attempt $i failed (exit $LASTEXITCODE); retrying"
             Start-Sleep -Seconds 20
