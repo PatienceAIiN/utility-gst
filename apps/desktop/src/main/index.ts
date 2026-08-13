@@ -226,7 +226,9 @@ function registerIpc(): void {
   ipcMain.handle('app:info', () => ({
     version: app.getVersion(),
     channel: process.env['UPDATE_CHANNEL'] ?? 'modern',
-    buildCode: process.env['BUILD_CODE'] ?? 'dev',
+    // CI sets BUILD_CODE. Unset means a local build, which for a packaged app
+    // should read as "production" rather than the internal "dev" placeholder.
+    buildCode: process.env['BUILD_CODE'] ?? (app.isPackaged ? 'production' : 'dev'),
     platform: process.platform,
     electron: process.versions.electron,
     noticeVersion: NOTICE_VERSION

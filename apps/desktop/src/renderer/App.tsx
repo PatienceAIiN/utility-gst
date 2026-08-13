@@ -237,7 +237,7 @@ export default function App(): JSX.Element {
           {info && (
             <Typography variant="caption" color="text.secondary">
               {' '}
-              · v{info.version} (build {info.buildCode})
+              · v{info.version}
             </Typography>
           )}
         </Box>

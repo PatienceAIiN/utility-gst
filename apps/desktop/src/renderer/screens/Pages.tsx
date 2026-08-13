@@ -76,9 +76,9 @@ export function AboutDialog({
           <Grid container spacing={2}>
             {[
               ['Version', info.version],
-              ['Build', info.buildCode],
-              ['Channel', info.channel],
-              ['Platform', info.platform]
+              ['Build', info.buildCode === 'dev' ? 'Development' : `Production ${info.buildCode}`],
+              ['Channel', info.channel === 'legacy' ? 'Legacy (Windows 7/8)' : 'Standard'],
+              ['Platform', info.platform === 'win32' ? 'Windows' : info.platform]
             ].map(([label, value]) => (
               <Grid item xs={6} sm={3} key={label}>
                 <Typography variant="caption" color="text.secondary">
