@@ -96,7 +96,10 @@ function collect(): Buffer {
 }
 
 function endpoint(): string | null {
-  return process.env['UTILITY_SYNC_ENDPOINT'] ?? null
+  // Setting first so an operator can point at the server without a rebuild;
+  // the env var stays as a development override.
+  const configured = store.get().serverUrl?.trim()
+  return configured || process.env['UTILITY_SYNC_ENDPOINT'] || null
 }
 
 export function status(): SyncStatus {

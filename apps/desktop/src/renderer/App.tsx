@@ -52,7 +52,7 @@ export default function App(): JSX.Element {
   const confirm = useCallback((spec: ConfirmSpec) => setConfirmSpec(spec), [])
 
   const patchSettings = useCallback(
-    (patch: Partial<Pick<SettingsShape, 'theme' | 'confirmOnExit'>>) => {
+    (patch: Partial<Pick<SettingsShape, 'theme' | 'confirmOnExit' | 'serverUrl'>>) => {
       void window.api.settings.patch(patch).then(setSettings)
     },
     []

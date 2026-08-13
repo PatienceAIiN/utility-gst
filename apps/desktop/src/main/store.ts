@@ -21,6 +21,12 @@ export interface Settings {
     noticeVersion: number
   } | undefined
   confirmOnExit: boolean
+  /**
+   * Base URL of the account/sync server. Unset means fully offline: no network
+   * call is ever made. Setting it is all that is needed to go live once the VM
+   * is up -- no rebuild, no reinstall.
+   */
+  serverUrl?: string | undefined
   /** Where generated files go. Unset means the managed default (see paths.ts). */
   downloadDir?: string | undefined
   lastExportDir?: string | undefined
@@ -66,6 +72,7 @@ class Store {
       ...(update.theme !== undefined ? { theme: update.theme } : {}),
       ...(update.confirmOnExit !== undefined ? { confirmOnExit: update.confirmOnExit } : {}),
       ...('consent' in update ? { consent: update.consent } : {}),
+      ...('serverUrl' in update ? { serverUrl: update.serverUrl } : {}),
       ...('downloadDir' in update ? { downloadDir: update.downloadDir } : {}),
       ...('lastExportDir' in update ? { lastExportDir: update.lastExportDir } : {})
     }

@@ -45,7 +45,8 @@ const SheetSave = z.object({
 const Consent = z.object({ analytics: z.boolean(), cloudSync: z.boolean() })
 const SettingsPatch = z.object({
   theme: z.enum(['light', 'dark', 'system']).optional(),
-  confirmOnExit: z.boolean().optional()
+  confirmOnExit: z.boolean().optional(),
+  serverUrl: z.union([z.string().url().max(300), z.literal('')]).optional()
 })
 const Feedback = z.object({
   kind: z.enum(['bug', 'idea', 'other']),
@@ -307,6 +308,21 @@ function registerIpc(): void {
 
   // --- cloud backup ---
   ipcMain.handle('sync:status', () => syncStatus())
+  /** Probe the configured server so misconfiguration is visible before a backup. */
+  ipcMain.handle('sync:probe', async () => {
+    const url = store.get().serverUrl?.trim()
+    if (!url) return { ok: false, reason: 'No server configured.' }
+    try {
+      const response = await fetch(`${url.replace(/\/$/, '')}/healthz`, {
+        signal: AbortSignal.timeout(6000)
+      })
+      return response.ok
+        ? { ok: true, reason: `Reachable (${response.status}).` }
+        : { ok: false, reason: `Server answered ${response.status}.` }
+    } catch (error) {
+      return { ok: false, reason: error instanceof Error ? error.message : 'Unreachable.' }
+    }
+  })
   ipcMain.handle('sync:run', async () => runBackup())
 
   // --- download location ---
