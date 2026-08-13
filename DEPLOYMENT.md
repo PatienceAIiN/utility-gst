@@ -45,6 +45,52 @@ chosen service against a real Win7 SP1 VM before purchasing**, not after.
 those secrets are unset the workflow still runs and produces an **unsigned**
 installer — useful for testing, not for distribution.
 
+## 2a. "Smart App Control blocked a file that may be unsafe"
+
+**This is not a bug in the app, and it cannot be fixed in code.** Smart App
+Control is Windows 11 refusing to run software that is neither signed by a
+trusted publisher nor known-good to Microsoft's cloud reputation service. Our
+build is currently unsigned, so SAC is behaving exactly as designed. No manifest
+entry, metadata change, icon, or packaging tweak will satisfy it — defeating
+that is the entire thing SAC exists to prevent.
+
+There are two distinct gatekeepers and they are often confused:
+
+| | What triggers it | Real fix |
+|---|---|---|
+| **Mark of the Web** | File downloaded from the internet carries a `Zone.Identifier` stream | Unblock the file (below) |
+| **Smart App Control** | Binary is unsigned or the signing cert has no reputation | Code signing certificate |
+
+### For testing right now
+
+Unblock the **archive before extracting** — unblocking after extraction is too
+late, because each extracted file already inherited the mark:
+
+```powershell
+Unblock-File .\Utility-1.0.0-win-x64-portable.zip
+Expand-Archive .\Utility-1.0.0-win-x64-portable.zip -DestinationPath C:\Utility
+```
+
+Or in Explorer: right-click the zip → Properties → tick **Unblock** → OK → then
+extract. Transferring by USB or LAN file copy usually avoids the mark entirely.
+
+Turning Smart App Control off is possible but **one-way** — re-enabling it
+requires reinstalling Windows. Do not do that on a machine you care about.
+
+### For distribution
+
+An **EV code-signing certificate**. This is the only real answer, and it is why
+`DECISIONS.md` R-03 calls signing the longest-lead item in the project:
+
+- An **OV** certificate signs the binary but starts with zero reputation, so
+  SmartScreen and SAC may still warn until enough installs accumulate.
+- An **EV** certificate bootstraps SmartScreen reputation immediately, which is
+  what makes warnings disappear on day one.
+
+Until a certificate exists, every Windows build — portable zip *and* NSIS
+installer — will trip this. The installer is not more trusted than the zip;
+only signing changes that.
+
 ## 3. Update feed
 
 Artifacts are published to Cloudflare R2 (`INFRA.md` I-05), one prefix per

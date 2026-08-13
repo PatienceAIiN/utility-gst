@@ -114,6 +114,9 @@ docker run --rm \
     rpmbuild --define "_topdir /work" -bb /work/SPECS/utility.spec >/tmp/build.log 2>&1 || {
       tail -40 /tmp/build.log; exit 1; }
     cp /work/RPMS/x86_64/*.rpm /out/
+    # rpmbuild runs as root in the container; hand the artifact back to the
+    # invoking user so it is not left root-owned on the host.
+    chown '"$(id -u):$(id -g)"' /out/*.rpm
     echo "built: $(ls /work/RPMS/x86_64/)"
   '
 

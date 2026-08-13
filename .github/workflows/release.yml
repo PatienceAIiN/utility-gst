@@ -107,6 +107,29 @@ jobs:
             release/${{ matrix.channel }}/latest*.yml
           retention-days: 14
 
+  # Attach the installers to a GitHub Release so there is a direct download URL
+  # to open on the target Windows machine -- Actions artifacts require a login
+  # and download slowly through the API.
+  release:
+    needs: build-windows
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: dist }
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          find dist -type f \( -name '*.exe' -o -name '*.blockmap' -o -name 'latest*.yml' \) -print
+          gh release create "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "Utility ${GITHUB_REF_NAME}" \
+            --notes "Unsigned build for testing. Windows may show a Smart App Control or SmartScreen warning until a code-signing certificate is in place -- see DEPLOYMENT.md section 2a." \
+            $(find dist -type f \( -name '*.exe' -o -name '*.blockmap' -o -name 'latest*.yml' \) | tr '\n' ' ')
+
   publish:
     needs: build-windows
     if: startsWith(github.ref, 'refs/tags/v')
@@ -125,6 +148,14 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           KEEP_RELEASES: "3"
         run: |
+          # R2 credentials are optional: until they are configured as repository
+          # secrets the release still succeeds, it just is not mirrored to the
+          # update feed. Failing here would block a release for a distribution
+          # step that is not yet wired.
+          if [ -z "${AWS_ACCESS_KEY_ID}" ] || [ -z "${R2_ENDPOINT}" ]; then
+            echo "::warning::R2 secrets not configured - skipping update-feed publish"
+            exit 0
+          fi
           pip install boto3
           for ch in modern legacy; do
             python scripts/r2_publish.py --channel "$ch" --src "dist/utility-$ch"
