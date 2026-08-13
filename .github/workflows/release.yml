@@ -120,7 +120,7 @@ jobs:
           path: |
             release/${{ matrix.channel }}/*.exe
             release/${{ matrix.channel }}/*.blockmap
-            release/${{ matrix.channel }}/latest*.yml
+            release/${{ matrix.channel }}/*.yml
           retention-days: 14
 
   # Attach the installers to a GitHub Release so there is a direct download URL
@@ -144,9 +144,18 @@ jobs:
           # Release cannot hold two assets with the same name -- the second
           # upload 404s. Manifests and blockmaps belong on the R2 update feed
           # (the publish job), not here; this Release is for humans to download.
-          mapfile -t INSTALLERS < <(find dist -type f -name '*.exe' | sort)
-          printf 'attaching: %s\n' "${INSTALLERS[@]}"
-          [ "${#INSTALLERS[@]}" -gt 0 ] || { echo "::error::no installers found"; exit 1; }
+          # electron-updater fetches the channel manifest and blockmaps from the
+          # release, so they must be attached alongside the installers. Each
+          # channel emits a DIFFERENTLY named manifest (latest.yml / legacy.yml)
+          # because publish.channel is set per config, so there is no collision.
+          mapfile -t ASSETS < <(find dist -type f \( -name '*.exe' -o -name '*.blockmap' -o -name '*.yml' \) | sort)
+          printf 'attaching: %s\n' "${ASSETS[@]}"
+          [ "${#ASSETS[@]}" -gt 0 ] || { echo "::error::no artifacts found"; exit 1; }
+
+          # Fail loudly on duplicate basenames: a Release cannot hold two assets
+          # with the same name and the second upload 404s silently mid-run.
+          DUPES=$(basename -a "${ASSETS[@]}" | sort | uniq -d)
+          if [ -n "$DUPES" ]; then echo "::error::duplicate asset names: $DUPES"; exit 1; fi
 
           # Re-running a tag should replace the Release, not fail on conflict.
           gh release delete "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --yes --cleanup-tag=false 2>/dev/null || true
@@ -160,7 +169,7 @@ jobs:
 
           - \`Utility-Setup-${GITHUB_REF_NAME#v}.exe\` — Windows 10/11
           - \`Utility-Setup-${GITHUB_REF_NAME#v}-legacy.exe\` — Windows 7 SP1/8/8.1" \
-            "${INSTALLERS[@]}"
+            "${ASSETS[@]}"
 
   publish:
     needs: build-windows
