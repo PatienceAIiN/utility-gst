@@ -98,6 +98,64 @@ function closeSplash(): void {
   splash = null
 }
 
+let browser: BrowserWindow | null = null
+
+/**
+ * In-app browser for our own site.
+ *
+ * The brief forbids remote content in any application window (§3), so this is a
+ * SEPARATE window that shares nothing with the app: no preload, no IPC bridge,
+ * sandboxed, context-isolated. It cannot reach invoices, the database or the
+ * sidecar even if the page were compromised.
+ *
+ * Navigation is pinned to patienceai.in. A link to anywhere else is handed to
+ * the system browser rather than followed here, so a redirect cannot turn this
+ * into a general-purpose browser inside a financial application.
+ */
+const ALLOWED_HOST = /^https:\/\/(www\.)?patienceai\.in(\/|$)/
+
+export function openInApp(url: string, title = 'Patience AI'): void {
+  if (!ALLOWED_HOST.test(url)) return
+  if (browser && !browser.isDestroyed()) {
+    browser.focus()
+    void browser.loadURL(url)
+    return
+  }
+  browser = new BrowserWindow({
+    width: 1100,
+    height: 800,
+    title,
+    autoHideMenuBar: true,
+    backgroundColor: '#0d1117',
+    webPreferences: {
+      // No preload: this window has no bridge to the application at all.
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+      webviewTag: false
+    }
+  })
+  browser.on('closed', () => {
+    browser = null
+  })
+  browser.webContents.on('will-navigate', (event, target) => {
+    if (!ALLOWED_HOST.test(target)) {
+      event.preventDefault()
+      void shell.openExternal(target)
+    }
+  })
+  browser.webContents.setWindowOpenHandler(({ url: target }) => {
+    if (ALLOWED_HOST.test(target)) {
+      void browser?.loadURL(target)
+    } else {
+      void shell.openExternal(target)
+    }
+    return { action: 'deny' }
+  })
+  void browser.loadURL(url)
+}
+
 function createWindow(): void {
   const window = new BrowserWindow({
     width: 1360,
@@ -124,7 +182,7 @@ function createWindow(): void {
 
   // No remote content is ever loaded into any window (brief §3).
   window.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https:\/\/(www\.)?patienceai\.in(\/|$)/.test(url)) void shell.openExternal(url)
+    openInApp(url)
     return { action: 'deny' }
   })
   window.webContents.on('will-navigate', (event) => event.preventDefault())
@@ -495,9 +553,9 @@ function registerIpc(): void {
     shell.showItemInFolder(z.string().min(1).parse(raw))
   })
   ipcMain.handle('shell:openExternal', (_event, raw: unknown) => {
-    const url = z.string().url().parse(raw)
-    // Allowlisted: the renderer must not be able to launch arbitrary URLs.
-    if (/^https:\/\/(www\.)?patienceai\.in(\/|$)/.test(url)) void shell.openExternal(url)
+    // Opens inside the app in an isolated window. Still allowlisted: the
+    // renderer must not be able to point this at an arbitrary host.
+    openInApp(z.string().url().parse(raw))
   })
 }
 

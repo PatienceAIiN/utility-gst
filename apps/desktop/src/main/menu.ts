@@ -1,4 +1,5 @@
-import { app, BrowserWindow, Menu, shell, type MenuItemConstructorOptions } from 'electron'
+import { app, BrowserWindow, Menu, type MenuItemConstructorOptions } from 'electron'
+import { openInApp } from './index'
 import { check as checkUpdates } from './updater'
 
 /**
@@ -117,7 +118,7 @@ export function buildMenu(): void {
       submenu: [
         {
           label: 'Documentation',
-          click: () => void shell.openExternal('https://patienceai.in/utility/#docs')
+          click: () => openInApp('https://patienceai.in/utility/#docs', 'Utility — Documentation')
         },
         {
           label: 'Keyboard shortcuts',

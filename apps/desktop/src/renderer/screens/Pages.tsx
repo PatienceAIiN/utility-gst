@@ -9,7 +9,7 @@ import FolderOpenIcon from '@mui/icons-material/FolderOpen'
 import GavelIcon from '@mui/icons-material/Gavel'
 import SystemUpdateAltIcon from '@mui/icons-material/SystemUpdateAlt'
 import type { AppInfo, PathsInfo, Settings as SettingsShape } from '../../preload/index'
-import { Brand, Section } from '../ui'
+import { Section } from '../ui'
 
 /**
  * About and Settings. These describe what the product does and what it will not
@@ -372,10 +372,6 @@ export function SettingsScreen({
           </Typography>
         </Paper>
       </Section>
-
-      <Box sx={{ mt: 4 }}>
-        <Brand />
-      </Box>
 
       <LicencesDialog open={licencesOpen} onClose={() => setLicencesOpen(false)} />
     </Box>
