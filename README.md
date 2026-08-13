@@ -11,12 +11,21 @@ Offline-first invoice digitisation for Indian GST accounting. Drop in mixed-form
 
 ## Status
 
-| Phase | State |
+| Area | State |
 |---|---|
-| 1 · Parsing core | **Done.** 92 tests, `mypy --strict` clean, ties out on the real sample invoice |
-| 2 · Import → validate → review → export | **Vertical slice working** (single-screen UI, real export) |
-| 0 · Dual-channel packaging | Windows portable zip builds from Fedora; signed NSIS installer needs CI |
-| 3–5 · Auth, OTA, Tier-3 AI | Designed, not built |
+| Parsing core | **Done.** 92 tests, `mypy --strict` clean, ties out to the rupee on the real sample invoice |
+| Import → validate → review → export | **Done.** Both client-template defects fixed; Invoice Summary + Import Log sheets |
+| Dual-channel packaging | **Done.** Signed-ready NSIS installers for both channels ship from CI on every tag |
+| History (CRUD) | **Done.** Paginated, searchable, soft delete + audit trail, re-export |
+| Spreadsheet editor | **Done.** Excel-compatible CSV/XLSX read and write, row/column CRUD |
+| Accounts | **Done, local-only.** Sign-up, sign-in, reset, profile, lockout — no network |
+| Cloud backup | **Client side done.** Consent-gated, gzipped, AES-256-GCM encrypted locally. Staged until the server exists |
+| DPDP consent, About, licences, feedback, exit confirm | **Done** |
+| Fedora / Ubuntu packages | RPM + AppImage build locally; held pending Windows sign-off |
+| Server (GCP VM + Postgres, auth API, sync endpoint, admin mail, activity logs) | **Not started** |
+| Landing page + its OTA | **Not started** |
+| OTA update feed | Wired client-side; needs the R2 feed published and a signing certificate |
+| Tier-3 AI profile generation | Designed and proven against Groq; not built |
 
 ## Fedora dev setup
 
