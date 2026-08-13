@@ -20,6 +20,11 @@ win:
       arch: [x64]
   artifactName: Utility-Setup-${version}-legacy.${ext}
 nsis:
+  # The same mark on the installer, the uninstaller and the Add/Remove entry --
+  # electron-builder does not infer these from win.icon.
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  installerHeaderIcon: build/icon.ico
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
