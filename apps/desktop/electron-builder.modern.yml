@@ -1,0 +1,31 @@
+# modern channel -- Windows 10/11. The default download.
+appId: in.patienceai.utility
+productName: Utility
+copyright: © Patience AI
+directories:
+  output: ../../release/modern
+  buildResources: build
+files:
+  - out/**/*
+  - package.json
+extraResources:
+  # PyInstaller onedir output. Built on windows-latest in CI -- never under Wine.
+  - from: ../../sidecar/dist/gstparse
+    to: sidecar
+    filter: ["**/*"]
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  artifactName: Utility-Setup-${version}.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  shortcutName: Utility
+publish:
+  provider: generic
+  # Channel-specific feed: a Win7 machine must never be offered a modern build.
+  url: https://updates.patienceai.in/utility/modern/
+  channel: latest

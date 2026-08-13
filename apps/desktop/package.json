@@ -1,0 +1,40 @@
+{
+  "name": "utility-desktop",
+  "version": "1.0.0",
+  "description": "Utility by Patience AI - GST invoice digitisation",
+  "main": "out/main/index.js",
+  "author": {
+    "name": "Patience AI",
+    "email": "support@patienceai.in"
+  },
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "pack:modern": "npm run build && electron-builder --win --config electron-builder.modern.yml",
+    "pack:legacy": "npm run build && electron-builder --win --config electron-builder.legacy.yml"
+  },
+  "dependencies": {
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@emotion/react": "^11.13.3",
+    "@emotion/styled": "^11.13.0",
+    "@mui/material": "^5.16.7",
+    "@mui/icons-material": "^5.16.7",
+    "@types/react": "^18.3.11",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.2",
+    "electron": "^32.2.0",
+    "electron-builder": "^25.1.8",
+    "electron-updater": "^6.3.9",
+    "electron-vite": "^2.3.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.9"
+  },
+  "homepage": "https://patienceai.in"
+}

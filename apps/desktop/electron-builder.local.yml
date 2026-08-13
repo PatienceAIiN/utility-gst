@@ -1,0 +1,28 @@
+# Local Fedora build only -- produces an UNSIGNED installer for smoke testing.
+#
+# signAndEditExecutable: false skips rcedit and signtool, which are the only
+# steps in the Windows pipeline that require wine. The released installer is
+# built by the windows-latest CI job using electron-builder.modern.yml /
+# .legacy.yml, where these run properly and the binary is code-signed.
+appId: in.patienceai.utility
+productName: Utility
+copyright: © Patience AI
+directories:
+  output: ../../release/local
+  buildResources: build
+files:
+  - out/**/*
+  - package.json
+extraResources:
+  - from: ../../sidecar/dist/gstparse
+    to: sidecar
+    filter: ["**/*"]
+win:
+  # zip, not nsis: electron-builder's NSIS step shells out to wine on Linux.
+  # A portable zip needs neither wine nor an installer and is enough to verify
+  # the app and sidecar actually run on Windows.
+  target:
+    - target: zip
+      arch: [x64]
+  artifactName: Utility-${version}-win-x64-portable.${ext}
+  signAndEditExecutable: false

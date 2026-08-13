@@ -1,0 +1,41 @@
+# Fedora / Linux desktop build.
+#
+# The sidecar here is a native PyInstaller onedir built on this machine -- no
+# cross-compilation involved, so this is the one platform where the frozen
+# binary is actually exercised locally before shipping.
+appId: in.patienceai.utility
+productName: Utility
+copyright: © Patience AI
+directories:
+  output: ../../release/linux
+  buildResources: build
+files:
+  - out/**/*
+  - package.json
+extraResources:
+  - from: ../../sidecar/dist-linux/gstparse
+    to: sidecar
+    filter: ["**/*"]
+linux:
+  maintainer: Patience AI <support@patienceai.in>
+  vendor: Patience AI
+  target:
+    - target: rpm
+      arch: [x64]
+    - target: AppImage
+      arch: [x64]
+  category: Office
+  synopsis: GST invoice digitisation and sales register export
+  description: >-
+    Offline-first invoice digitisation for Indian GST accounting. Parses
+    invoices, validates them arithmetically, and exports a consolidated
+    GST Sales Register. No data leaves the machine.
+  desktop:
+    entry:
+      Name: Utility
+      Comment: GST invoice digitisation by Patience AI
+      Categories: Office;Finance;
+rpm:
+  # rpmbuild strips and re-links by default, which corrupts the PyInstaller
+  # bundle's embedded loader. Leave the payload alone.
+  fpm: ["--rpm-tag", "%define _build_id_links none"]

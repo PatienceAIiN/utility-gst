@@ -1,0 +1,49 @@
+# secrets — never commit
+.env
+.env.local
+*.pem
+*.pfx
+*.p12
+
+# client data — never commit real invoices or exports
+/samples/real/
+/out/
+*.xlsx.tmp
+
+# node
+node_modules/
+dist/
+release/
+.vite/
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+build/
+*.spec.bak
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# db
+*.db
+*.db-wal
+*.db-shm
+
+# os
+.DS_Store
+
+# build output
+/release/
+/sidecar/dist/
+*.tsbuildinfo
+/apps/desktop/out/
+/sidecar/dist-linux/
+/.cache/
+
+# Client financial data — NEVER commit to a public repo.
+# Real GSTINs, party names, bank details and amounts. Supply locally instead;
+# the golden test skips when absent. See README "Test fixtures".
+/sidecar/tests/fixtures/
+/samples/expected/
