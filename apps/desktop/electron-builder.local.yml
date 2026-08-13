@@ -18,6 +18,7 @@ extraResources:
     to: sidecar
     filter: ["**/*"]
 win:
+  icon: build/icon.ico
   # zip, not nsis: electron-builder's NSIS step shells out to wine on Linux.
   # A portable zip needs neither wine nor an installer and is enough to verify
   # the app and sidecar actually run on Windows.

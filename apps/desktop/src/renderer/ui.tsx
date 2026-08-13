@@ -10,7 +10,7 @@ import {
 export function Brand(): JSX.Element {
   return (
     <Typography variant="caption" color="text.secondary">
-      a product of{' '}
+      A product of{' '}
       <Link
         component="button"
         variant="caption"

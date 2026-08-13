@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
 import {
-  Alert, Box, Button, Chip, Divider, FormControlLabel, Grid, Link, List, ListItem, ListItemText,
-  MenuItem, Paper, Stack, Switch, TextField, Typography
+  Alert, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Divider,
+  FormControlLabel, Grid, Link, List, ListItem, ListItemText, MenuItem, Paper, Stack, Switch,
+  TextField, Typography
 } from '@mui/material'
 import CloudSyncIcon from '@mui/icons-material/CloudSync'
 import FolderOpenIcon from '@mui/icons-material/FolderOpen'
+import GavelIcon from '@mui/icons-material/Gavel'
 import SystemUpdateAltIcon from '@mui/icons-material/SystemUpdateAlt'
 import type { AppInfo, PathsInfo, Settings as SettingsShape } from '../../preload/index'
 import { Brand, Section } from '../ui'
@@ -99,31 +101,42 @@ export function About({ info }: { info: AppInfo }): JSX.Element {
         </Paper>
       </Section>
 
-      <Section
-        title="Open-source licences"
-        subtitle="Utility is built on these projects. Full licence texts ship in the application folder."
-      >
-        <Paper variant="outlined">
-          <List dense disablePadding>
-            {LICENCES.map((item, index) => (
-              <ListItem key={item.name} divider={index < LICENCES.length - 1}>
-                <ListItemText
-                  primary={
-                    <Stack direction="row" spacing={1} alignItems="center">
-                      <Typography variant="body2" fontWeight={600}>
-                        {item.name}
-                      </Typography>
-                      <Chip size="small" variant="outlined" label={item.licence} />
-                    </Stack>
-                  }
-                  secondary={item.what}
-                />
-              </ListItem>
-            ))}
-          </List>
-        </Paper>
-      </Section>
     </Box>
+  )
+}
+
+function LicencesDialog({ open, onClose }: { open: boolean; onClose: () => void }): JSX.Element {
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth scroll="paper">
+      <DialogTitle>Open-source licences</DialogTitle>
+      <DialogContent dividers>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          Utility is built on these projects. Full licence texts ship in the application folder.
+        </Typography>
+        <List dense disablePadding>
+          {LICENCES.map((item, index) => (
+            <ListItem key={item.name} divider={index < LICENCES.length - 1} disableGutters>
+              <ListItemText
+                primary={
+                  <Stack direction="row" spacing={1} alignItems="center">
+                    <Typography variant="body2" fontWeight={600}>
+                      {item.name}
+                    </Typography>
+                    <Chip size="small" variant="outlined" label={item.licence} />
+                  </Stack>
+                }
+                secondary={item.what}
+              />
+            </ListItem>
+          ))}
+        </List>
+      </DialogContent>
+      <DialogActions sx={{ px: 3, pb: 2 }}>
+        <Button variant="contained" onClick={onClose}>
+          Close
+        </Button>
+      </DialogActions>
+    </Dialog>
   )
 }
 
@@ -141,6 +154,7 @@ export function SettingsScreen({
   const [update, setUpdate] = useState<{ status: string; channel?: string } | null>(null)
   const [checking, setChecking] = useState(false)
   const [paths, setPaths] = useState<PathsInfo | null>(null)
+  const [licencesOpen, setLicencesOpen] = useState(false)
 
   useEffect(() => setUpdate(null), [info.version])
   useEffect(() => {
@@ -268,6 +282,22 @@ export function SettingsScreen({
         </Paper>
       </Section>
 
+      <Section
+        title="Licences"
+        subtitle="The open-source projects Utility is built on."
+      >
+        <Paper variant="outlined" sx={{ p: 3 }}>
+          <Stack direction="row" spacing={2} alignItems="center">
+            <Button variant="outlined" startIcon={<GavelIcon />} onClick={() => setLicencesOpen(true)}>
+              View licences
+            </Button>
+            <Typography variant="body2" color="text.secondary">
+              {LICENCES.length} components
+            </Typography>
+          </Stack>
+        </Paper>
+      </Section>
+
       <Section title="Updates">
         <Paper variant="outlined" sx={{ p: 3 }}>
           <Stack direction="row" spacing={2} alignItems="center">
@@ -309,6 +339,8 @@ export function SettingsScreen({
       <Box sx={{ mt: 4 }}>
         <Brand />
       </Box>
+
+      <LicencesDialog open={licencesOpen} onClose={() => setLicencesOpen(false)} />
     </Box>
   )
 }

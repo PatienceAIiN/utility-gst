@@ -17,6 +17,7 @@ extraResources:
     to: sidecar
     filter: ["**/*"]
 linux:
+  icon: build/icon.png
   maintainer: Patience AI <support@patienceai.in>
   vendor: Patience AI
   target:
