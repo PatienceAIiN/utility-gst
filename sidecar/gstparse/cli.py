@@ -17,6 +17,7 @@ from typing import Any
 from .excel.writer import write_register
 from .models import Invoice
 from .parser import parse_pdf
+from .sheets import read_sheet, write_sheet
 
 SUPPORTED = {".pdf"}
 
@@ -64,6 +65,11 @@ def _rpc_dispatch(method: str, params: dict[str, Any]) -> Any:
         return {"ok": True}
     if method == "parse":
         return parse_file(Path(params["path"])).to_json()
+    if method == "sheet.read":
+        return read_sheet(Path(params["path"]))
+    if method == "sheet.write":
+        return write_sheet(Path(params["path"]), params["sheets"],
+                           bool(params.get("overwrite")), params.get("delimiter", ","))
     if method == "export":
         invoices = [parse_file(Path(p)) for p in params["paths"]]
         if any(i.is_blocked for i in invoices) and not params.get("force"):
