@@ -355,3 +355,117 @@ export function ShortcutsDialog({
     </Dialog>
   )
 }
+
+/** Shown once after an update has been applied. */
+export function UpdatedDialog({
+  version,
+  onClose
+}: {
+  version: string | null
+  onClose: () => void
+}): JSX.Element {
+  return (
+    <Dialog open={version !== null} onClose={onClose} maxWidth="xs" fullWidth>
+      <DialogContent sx={{ textAlign: 'center', py: 4 }}>
+        <Box
+          sx={{
+            width: 68,
+            height: 68,
+            mx: 'auto',
+            mb: 2,
+            borderRadius: '50%',
+            display: 'grid',
+            placeItems: 'center',
+            bgcolor: 'success.main',
+            color: '#fff',
+            fontSize: 34,
+            animation: 'pop .45s cubic-bezier(.2,.8,.3,1)',
+            '@keyframes pop': {
+              from: { transform: 'scale(.5)', opacity: 0 },
+              to: { transform: 'scale(1)', opacity: 1 }
+            }
+          }}
+        >
+          ✓
+        </Box>
+        <Typography variant="h6" gutterBottom>
+          Updated to {version}
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          Utility is now up to date. Nothing else is needed.
+        </Typography>
+      </DialogContent>
+      <DialogActions sx={{ px: 3, pb: 2, justifyContent: 'center' }}>
+        <Button variant="contained" onClick={onClose}>
+          Continue
+        </Button>
+      </DialogActions>
+    </Dialog>
+  )
+}
+
+/** Offered when a downloaded update is waiting to be applied. */
+export function UpdateReadyDialog({
+  version,
+  onClose
+}: {
+  version: string | null
+  onClose: () => void
+}): JSX.Element {
+  return (
+    <Dialog open={version !== null} onClose={onClose} maxWidth="xs" fullWidth>
+      <DialogTitle>Version {version} is ready</DialogTitle>
+      <DialogContent>
+        <DialogContentText>
+          The update has downloaded. It will be applied when you close Utility — your work is never
+          interrupted mid-way.
+        </DialogContentText>
+        <Alert severity="info" sx={{ mt: 2 }}>
+          Closing now takes a few seconds. Anything unsaved in the review grid or the spreadsheet
+          editor will be lost, so finish what you are doing first.
+        </Alert>
+      </DialogContent>
+      <DialogActions sx={{ px: 3, pb: 2 }}>
+        <Button onClick={onClose}>Later</Button>
+        <Button variant="contained" onClick={() => void window.api.updates.install()}>
+          Close and update
+        </Button>
+      </DialogActions>
+    </Dialog>
+  )
+}
+
+/** Update requires an account. */
+export function SignInRequiredDialog({
+  open,
+  onClose,
+  onGoToProfile
+}: {
+  open: boolean
+  onClose: () => void
+  onGoToProfile: () => void
+}): JSX.Element {
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
+      <DialogTitle>Sign in to receive updates</DialogTitle>
+      <DialogContent>
+        <DialogContentText>
+          Updates are tied to your account. Create one or sign in — it takes a moment and stays on
+          this computer.
+        </DialogContentText>
+      </DialogContent>
+      <DialogActions sx={{ px: 3, pb: 2 }}>
+        <Button onClick={onClose}>Not now</Button>
+        <Button
+          variant="contained"
+          onClick={() => {
+            onGoToProfile()
+            onClose()
+          }}
+        >
+          Go to Profile
+        </Button>
+      </DialogActions>
+    </Dialog>
+  )
+}

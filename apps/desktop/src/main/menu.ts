@@ -1,6 +1,4 @@
 import { app, BrowserWindow, Menu, type MenuItemConstructorOptions } from 'electron'
-import { openInApp } from './index'
-import { check as checkUpdates } from './updater'
 
 /**
  * Application menu.
@@ -116,10 +114,7 @@ export function buildMenu(): void {
     {
       label: '&Help',
       submenu: [
-        {
-          label: 'Documentation',
-          click: () => openInApp('https://patienceai.in/utility/#docs', 'Utility — Documentation')
-        },
+        { label: 'Documentation', click: () => send('menu:action', 'docs') },
         {
           label: 'Keyboard shortcuts',
           accelerator: 'CmdOrCtrl+/',
@@ -127,16 +122,12 @@ export function buildMenu(): void {
         },
         { type: 'separator' },
         { label: 'Send feedback…', click: () => send('menu:action', 'feedback') },
-        {
-          label: 'Check for updates',
-          click: () => {
-            void checkUpdates()
-            send('menu:navigate', 'settings')
-          }
-        },
+        { label: 'Check for updates', click: () => send('menu:action', 'check-updates') },
         { type: 'separator' },
         { label: 'Licences', click: () => send('menu:action', 'licences') },
-        { label: `About Utility ${app.getVersion()}`, click: () => send('menu:navigate', 'about') }
+        { label: `About Utility ${app.getVersion()}`, click: () => send('menu:navigate', 'about') },
+        { type: 'separator' },
+        { label: 'Toggle light / dark', accelerator: 'CmdOrCtrl+Shift+L', click: () => send('menu:action', 'toggle-theme') }
       ]
     }
   ]

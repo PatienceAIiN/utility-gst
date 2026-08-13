@@ -101,6 +101,7 @@ export type UpdateState =
   | { status: 'downloading'; version: string; percent: number }
   | { status: 'ready'; version: string; notes?: string }
   | { status: 'error'; detail: string }
+  | { status: 'signin-required' }
 
 export interface SyncOutcome {
   status: 'uploaded' | 'staged' | 'skipped'

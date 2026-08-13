@@ -1,11 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  Box, Chip, Container, CssBaseline, Fade, IconButton, Stack, ThemeProvider, Tooltip, Typography,
-  useMediaQuery
+  Box, Container, CssBaseline, Fade, Stack, ThemeProvider, Typography, useMediaQuery
 } from '@mui/material'
-import FeedbackOutlinedIcon from '@mui/icons-material/FeedbackOutlined'
-import DarkModeIcon from '@mui/icons-material/DarkMode'
-import LightModeIcon from '@mui/icons-material/LightMode'
 import type { AppInfo, Settings as SettingsShape } from '../preload/index'
 import { buildTheme } from './theme'
 import {
@@ -14,6 +10,9 @@ import {
   ConsentBanner,
   FeedbackDialog,
   ShortcutsDialog,
+  SignInRequiredDialog,
+  UpdateReadyDialog,
+  UpdatedDialog,
   type ConfirmSpec
 } from './ui'
 import Invoices from './screens/Invoices'
@@ -21,7 +20,8 @@ import History from './screens/History'
 import Sheets from './screens/Sheets'
 import Account from './screens/Account'
 import Network from './screens/Network'
-import { About, SettingsScreen } from './screens/Pages'
+import { About, LicencesDialog, SettingsScreen } from './screens/Pages'
+import Docs from './screens/Docs'
 
 /**
  * Navigation lives entirely in the native application menu (View, and the
@@ -49,6 +49,11 @@ export default function App(): JSX.Element {
   const [confirmSpec, setConfirmSpec] = useState<ConfirmSpec | null>(null)
   const [feedbackOpen, setFeedbackOpen] = useState(false)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const [licencesOpen, setLicencesOpen] = useState(false)
+  const [docsOpen, setDocsOpen] = useState(false)
+  const [updateReady, setUpdateReady] = useState<string | null>(null)
+  const [updated, setUpdated] = useState<string | null>(null)
+  const [needSignIn, setNeedSignIn] = useState(false)
   const [signedIn, setSignedIn] = useState(false)
 
   const prefersDark = useMediaQuery('(prefers-color-scheme: dark)')
@@ -93,14 +98,37 @@ export default function App(): JSX.Element {
             .then(setSettings)
         })
       } else if (action === 'reveal-output') void window.api.paths.reveal()
+      else if (action === 'docs') setDocsOpen(true)
+      else if (action === 'licences') setLicencesOpen(true)
+      else if (action === 'check-updates') {
+        void window.api.updates.check().then((s) => {
+          if (s.status === 'signin-required') setNeedSignIn(true)
+          else setRoute('settings')
+        })
+      }
       else if (action === 'import' || action === 'export') setRoute('invoices')
       else if (action === 'open-sheet' || action === 'save-sheet') setRoute('sheets')
-      else if (action === 'licences') setRoute('settings')
     })
     return () => {
       offNav()
       offAction()
     }
+  }, [])
+
+  useEffect(() => {
+    if (!info) return
+    // "Updated" is decided by comparing the running version against the last one
+    // seen, so it appears exactly once after an update actually applied.
+    const key = 'utility.lastSeenVersion'
+    const previous = localStorage.getItem(key)
+    if (previous && previous !== info.version) setUpdated(info.version)
+    localStorage.setItem(key, info.version)
+  }, [info])
+
+  useEffect(() => {
+    return window.api.updates.onState((state) => {
+      if (state.status === 'ready') setUpdateReady(state.version)
+    })
   }, [])
 
   return (
@@ -114,11 +142,11 @@ export default function App(): JSX.Element {
           bgcolor: 'background.default'
         }}
       >
-        {/* Slim context bar: says where you are without repeating the menu. */}
+        {/* Slim context bar: just says where you are. Theme and feedback live in
+            the menu bar so there is one place to look for an action. */}
         <Stack
           direction="row"
           alignItems="center"
-          spacing={1.5}
           sx={{
             px: 3,
             py: 1.25,
@@ -130,25 +158,6 @@ export default function App(): JSX.Element {
           <Typography variant="subtitle2" sx={{ fontWeight: 680, letterSpacing: '-.01em' }}>
             {TITLES[route]}
           </Typography>
-          <Chip size="small" variant="outlined" label="View menu · Ctrl 1–7" />
-          <Box sx={{ flexGrow: 1 }} />
-          <Tooltip title="Send feedback">
-            <IconButton size="small" onClick={() => setFeedbackOpen(true)}>
-              <FeedbackOutlinedIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
-          <Tooltip title={mode === 'dark' ? 'Light theme' : 'Dark theme'}>
-            <IconButton
-              size="small"
-              onClick={() => patchSettings({ theme: mode === 'dark' ? 'light' : 'dark' })}
-            >
-              {mode === 'dark' ? (
-                <LightModeIcon fontSize="small" />
-              ) : (
-                <DarkModeIcon fontSize="small" />
-              )}
-            </IconButton>
-          </Tooltip>
         </Stack>
 
         <Container maxWidth="xl" sx={{ flexGrow: 1, py: 3.5 }}>
@@ -198,6 +207,15 @@ export default function App(): JSX.Element {
       <FeedbackDialog open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
       <ShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
       <ConsentBanner open={settings?.needsConsent === true} onDecide={setConsent} />
+      <LicencesDialog open={licencesOpen} onClose={() => setLicencesOpen(false)} />
+      <Docs open={docsOpen} onClose={() => setDocsOpen(false)} />
+      <UpdateReadyDialog version={updateReady} onClose={() => setUpdateReady(null)} />
+      <UpdatedDialog version={updated} onClose={() => setUpdated(null)} />
+      <SignInRequiredDialog
+        open={needSignIn}
+        onClose={() => setNeedSignIn(false)}
+        onGoToProfile={() => setRoute('profile')}
+      />
     </ThemeProvider>
   )
 }

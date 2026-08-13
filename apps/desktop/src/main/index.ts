@@ -317,7 +317,9 @@ function registerIpc(): void {
     busyReason = 'An export'
     try {
       // The gate is re-run here. The disabled button in the renderer is UX only.
-      return await sidecar.call('export', { ...args, out: args.out || outputDir('registers') })
+      // Always the managed location. Honouring a picked folder here is what made
+      // exports ignore the folder configured in Settings.
+      return await sidecar.call('export', { ...args, out: outputDir('registers') })
     } finally {
       busyReason = null
     }
@@ -584,9 +586,16 @@ function registerIpc(): void {
   ipcMain.handle('sheet:read', (_event, raw: unknown) =>
     sidecar.call('sheet.read', SheetPath.parse(raw))
   )
-  ipcMain.handle('sheet:write', (_event, raw: unknown) =>
-    sidecar.call('sheet.write', SheetSave.parse(raw))
-  )
+  ipcMain.handle('sheet:write', (_event, raw: unknown) => {
+    const args = SheetSave.parse(raw)
+    if (args.overwrite) return sidecar.call('sheet.write', args)
+    // Non-destructive saves go to the managed Spreadsheets folder.
+    const name = args.path.split(/[\\/]/).pop() ?? 'sheet.xlsx'
+    return sidecar.call('sheet.write', {
+      ...args,
+      path: join(outputDir('spreadsheets'), name)
+    })
+  })
 
   // --- feedback ---
   ipcMain.handle('feedback:send', async (_event, raw: unknown) => {
@@ -595,8 +604,14 @@ function registerIpc(): void {
   })
 
   // --- updates ---
-  ipcMain.handle('updates:state', () => currentState())
-  ipcMain.handle('updates:check', async () => checkUpdates())
+  ipcMain.handle('updates:state', () =>
+    auth.status().signedIn ? currentState() : { status: 'signin-required' as const }
+  )
+  ipcMain.handle('updates:check', async () => {
+    // Updates are tied to an account so a licence check can be enforced later.
+    if (!auth.status().signedIn) return { status: 'signin-required' as const }
+    return checkUpdates()
+  })
   ipcMain.handle('updates:install', () => {
     installNow()
   })

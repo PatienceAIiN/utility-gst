@@ -6,7 +6,6 @@ import {
 } from '@mui/material'
 import CloudSyncIcon from '@mui/icons-material/CloudSync'
 import FolderOpenIcon from '@mui/icons-material/FolderOpen'
-import GavelIcon from '@mui/icons-material/Gavel'
 import SystemUpdateAltIcon from '@mui/icons-material/SystemUpdateAlt'
 import type { AppInfo, PathsInfo, Settings as SettingsShape } from '../../preload/index'
 import { Section } from '../ui'
@@ -105,7 +104,7 @@ export function About({ info }: { info: AppInfo }): JSX.Element {
   )
 }
 
-function LicencesDialog({ open, onClose }: { open: boolean; onClose: () => void }): JSX.Element {
+export function LicencesDialog({ open, onClose }: { open: boolean; onClose: () => void }): JSX.Element {
   return (
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth scroll="paper">
       <DialogTitle>Open-source licences</DialogTitle>
@@ -154,12 +153,13 @@ export function SettingsScreen({
   onConsent: (analytics: boolean, cloudSync: boolean) => void
 }): JSX.Element {
   const [update, setUpdate] = useState<import('../../preload/index').UpdateState | null>(null)
-  const [checking, setChecking] = useState(false)
   const [paths, setPaths] = useState<PathsInfo | null>(null)
-  const [licencesOpen, setLicencesOpen] = useState(false)
 
 
-  useEffect(() => setUpdate(null), [info.version])
+  useEffect(() => {
+    void window.api.updates.state().then(setUpdate)
+    return window.api.updates.onState(setUpdate)
+  }, [info.version])
   useEffect(() => {
     void window.api.paths.info().then(setPaths)
   }, [])
@@ -291,44 +291,17 @@ export function SettingsScreen({
         </Paper>
       </Section>
 
-      <Section
-        title="Licences"
-        subtitle="The open-source projects Utility is built on."
-      >
-        <Paper variant="outlined" sx={{ p: 3 }}>
-          <Stack direction="row" spacing={2} alignItems="center">
-            <Button variant="outlined" startIcon={<GavelIcon />} onClick={() => setLicencesOpen(true)}>
-              View licences
-            </Button>
-            <Typography variant="body2" color="text.secondary">
-              {LICENCES.length} components
-            </Typography>
-          </Stack>
-        </Paper>
-      </Section>
-
       <Section title="Updates">
         <Paper variant="outlined" sx={{ p: 3 }}>
           <Stack direction="row" spacing={2} alignItems="center">
-            <Button
-              variant="outlined"
-              startIcon={<SystemUpdateAltIcon />}
-              disabled={checking}
-              onClick={async () => {
-                setChecking(true)
-                try {
-                  setUpdate(await window.api.updates.check())
-                } finally {
-                  setChecking(false)
-                }
-              }}
-            >
-              {checking ? 'Checking…' : 'Check for updates'}
-            </Button>
-            <Typography variant="body2" color="text.secondary">
-              Version {info.version} (build {info.buildCode})
+            <SystemUpdateAltIcon fontSize="small" color="disabled" />
+            <Typography variant="body2">
+              Installed: <strong>{info.version}</strong> (build {info.buildCode})
             </Typography>
           </Stack>
+          <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>
+            Check for updates from Help in the menu bar.
+          </Typography>
           {update?.status === 'dev' && (
             <Alert severity="info" sx={{ mt: 2 }}>
               Running from a development build — updates do not apply.
@@ -362,6 +335,11 @@ export function SettingsScreen({
               Version {update.version} is ready and will install when you close the app.
             </Alert>
           )}
+          {update?.status === 'signin-required' && (
+            <Alert severity="info" sx={{ mt: 2 }}>
+              Sign in on the Profile page to receive updates.
+            </Alert>
+          )}
           {update?.status === 'error' && (
             <Alert severity="warning" sx={{ mt: 2 }}>
               Could not check for updates: {update.detail}
@@ -373,7 +351,6 @@ export function SettingsScreen({
         </Paper>
       </Section>
 
-      <LicencesDialog open={licencesOpen} onClose={() => setLicencesOpen(false)} />
     </Box>
   )
 }

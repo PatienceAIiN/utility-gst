@@ -20,6 +20,7 @@ export type UpdateState =
   | { status: 'downloading'; version: string; percent: number }
   | { status: 'ready'; version: string; notes?: string | undefined }
   | { status: 'error'; detail: string }
+  | { status: 'signin-required' }
 
 let state: UpdateState = { status: 'current', version: app.getVersion() }
 let wired = false

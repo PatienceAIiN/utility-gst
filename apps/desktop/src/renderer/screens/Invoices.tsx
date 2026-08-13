@@ -1,10 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   Alert, Box, Button, Chip, Divider, Paper, Stack, Table, TableBody, TableCell, TableContainer,
-  TableHead, TableRow, Tooltip, Typography
+  TableHead, TableRow, Typography
 } from '@mui/material'
-import FolderOpenIcon from '@mui/icons-material/FolderOpen'
-import DownloadIcon from '@mui/icons-material/Download'
 import type { ConfirmSpec } from '../ui'
 import { Busy, EmptyState, Section } from '../ui'
 
@@ -82,11 +80,10 @@ export default function Invoices({
 
   async function runExport(): Promise<void> {
     setError(null)
-    const dir = await window.api.export.pickDir()
-    if (!dir) return
+    if (paths.length === 0) return
     setBusy('Writing the register…')
     try {
-      const result = await window.api.export.run(paths, dir)
+      const result = await window.api.export.run(paths, '')
       setExported(result.path)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Export failed')
@@ -95,53 +92,40 @@ export default function Invoices({
     }
   }
 
+  // File menu drives import and export; this screen shows the result.
+  useEffect(() => {
+    const off = window.api.menu.onAction((action) => {
+      if (action === 'import') void pickAndParse()
+      else if (action === 'export') void runExport()
+    })
+    return off
+  })
+
   return (
     <Section
       title="Invoices"
       subtitle="Import invoices, check what was read, then export the register."
       action={
-        <Stack direction="row" spacing={1}>
+        invoices.length > 0 ? (
           <Button
-            variant="contained"
-            startIcon={<FolderOpenIcon />}
-            onClick={() => void pickAndParse()}
-            disabled={busy !== null}
+            color="inherit"
+            onClick={() =>
+              confirm({
+                title: 'Clear imported invoices?',
+                body: 'Removes them from this screen. The source files are not touched.',
+                confirmLabel: 'Clear',
+                destructive: true,
+                onConfirm: () => {
+                  setInvoices([])
+                  setPaths([])
+                  setExported(null)
+                }
+              })
+            }
           >
-            Import
+            Clear
           </Button>
-          <Tooltip title={blocked ? 'Fix the blocking failures first' : ''}>
-            <span>
-              <Button
-                variant="outlined"
-                startIcon={<DownloadIcon />}
-                disabled={busy !== null || invoices.length === 0 || blocked}
-                onClick={() => void runExport()}
-              >
-                Export register
-              </Button>
-            </span>
-          </Tooltip>
-          {invoices.length > 0 && (
-            <Button
-              color="inherit"
-              onClick={() =>
-                confirm({
-                  title: 'Clear imported invoices?',
-                  body: 'Removes them from this screen. The source files are not touched.',
-                  confirmLabel: 'Clear',
-                  destructive: true,
-                  onConfirm: () => {
-                    setInvoices([])
-                    setPaths([])
-                    setExported(null)
-                  }
-                })
-              }
-            >
-              Clear
-            </Button>
-          )}
-        </Stack>
+        ) : undefined
       }
     >
       <Busy show={busy !== null} label={busy ?? undefined} />
@@ -179,12 +163,7 @@ export default function Invoices({
       {invoices.length === 0 && busy === null && (
         <EmptyState
           title="No invoices loaded"
-          body="Import one or more invoice PDFs. Every file is read, checked and reconciled on this computer — nothing is uploaded."
-          action={
-            <Button variant="contained" startIcon={<FolderOpenIcon />} onClick={() => void pickAndParse()}>
-              Import invoices
-            </Button>
-          }
+          body="Use File → Import invoices (Ctrl+O) to begin. Every file is read, checked and reconciled on this computer — nothing is uploaded. When the figures tie out, File → Export register (Ctrl+E) writes the register to your Utility folder."
         />
       )}
 
