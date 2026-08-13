@@ -96,7 +96,19 @@ jobs:
           # are unset and electron-builder produces an unsigned installer.
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-        run: npm run build && npx electron-builder --win --config electron-builder.${{ matrix.channel }}.yml
+        # electron-builder downloads the Electron runtime zip from GitHub release
+        # assets during packaging, and that download is not retried internally --
+        # a dropped connection fails the whole job. Retry the packaging step.
+        run: |
+          npm run build
+          $ErrorActionPreference = 'Continue'
+          for ($i = 1; $i -le 3; $i++) {
+            npx electron-builder --win --config electron-builder.${{ matrix.channel }}.yml
+            if ($LASTEXITCODE -eq 0) { exit 0 }
+            Write-Host "::warning::packaging attempt $i failed (exit $LASTEXITCODE); retrying"
+            Start-Sleep -Seconds 20
+          }
+          exit 1
 
       - uses: actions/upload-artifact@v4
         with:

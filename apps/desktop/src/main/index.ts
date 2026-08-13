@@ -1,7 +1,27 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { appendFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { z } from 'zod'
+import { history } from './history'
+import { baseDir, layoutPreview, outputDir } from './paths'
 import { sidecar } from './sidecar'
+import { NOTICE_VERSION, store } from './store'
+
+/** Shape the sidecar returns for a parsed invoice. Validated on arrival, not trusted. */
+interface ParsedInvoice {
+  source_file: string
+  sha256?: string
+  invoice_no?: string | null
+  invoice_date?: string | null
+  buyer_name?: string | null
+  buyer_gstin?: string | null
+  supply_type?: string | null
+  line_items?: unknown[]
+  totals?: Record<string, string | null>
+  findings?: { rule_code: string; severity: string }[]
+  is_blocked?: boolean
+  error?: string
+}
 
 /**
  * Main process. The renderer is treated as untrusted input: every IPC payload
@@ -12,16 +32,39 @@ const isDev = !app.isPackaged
 
 // --- IPC payload schemas (the trust boundary) ------------------------------
 const PathList = z.object({ paths: z.array(z.string().min(1)).min(1).max(200) })
-const ExportArgs = PathList.extend({ out: z.string().min(1), force: z.boolean().optional() })
+const ExportArgs = PathList.extend({ out: z.string().optional(), force: z.boolean().optional() })
+const SheetPath = z.object({ path: z.string().min(1) })
+const SheetSave = z.object({
+  path: z.string().min(1),
+  sheets: z.array(z.object({ name: z.string(), rows: z.array(z.array(z.string())) })).min(1),
+  overwrite: z.boolean().optional(),
+  delimiter: z.string().max(1).optional()
+})
+const Consent = z.object({ analytics: z.boolean(), cloudSync: z.boolean() })
+const SettingsPatch = z.object({
+  theme: z.enum(['light', 'dark', 'system']).optional(),
+  confirmOnExit: z.boolean().optional()
+})
+const Feedback = z.object({
+  kind: z.enum(['bug', 'idea', 'other']),
+  message: z.string().min(1).max(5000),
+  email: z.string().email().optional().or(z.literal(''))
+})
+
+/** Set while an import or export is running, so a quit cannot lose work. */
+let busyReason: string | null = null
+let quitConfirmed = false
 
 function createWindow(): void {
   const window = new BrowserWindow({
-    width: 1280,
-    height: 820,
-    minWidth: 980,
+    width: 1360,
+    height: 860,
+    minWidth: 1040,
+    minHeight: 640,
     show: false,
-    backgroundColor: '#111418',
+    backgroundColor: '#0d1117',
     title: 'Utility by Patience AI',
+    icon: join(__dirname, '../../build/icon.png'),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -35,10 +78,34 @@ function createWindow(): void {
 
   // No remote content is ever loaded into any window (brief §3).
   window.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url)
+    if (/^https:\/\/(www\.)?patienceai\.in(\/|$)/.test(url)) void shell.openExternal(url)
     return { action: 'deny' }
   })
   window.webContents.on('will-navigate', (event) => event.preventDefault())
+
+  window.on('close', (event) => {
+    if (quitConfirmed) return
+    const { confirmOnExit } = store.get()
+    if (!confirmOnExit && !busyReason) return
+
+    event.preventDefault()
+    const inFlight = busyReason !== null
+    const choice = dialog.showMessageBoxSync(window, {
+      type: inFlight ? 'warning' : 'question',
+      buttons: inFlight ? ['Keep working', 'Quit anyway'] : ['Cancel', 'Quit'],
+      defaultId: 0,
+      cancelId: 0,
+      title: 'Quit Utility?',
+      message: inFlight ? `${busyReason} is still running.` : 'Quit Utility?',
+      detail: inFlight
+        ? 'Quitting now will lose the work in progress.'
+        : 'Any unsaved edits in the review grid will be lost.'
+    })
+    if (choice === 1) {
+      quitConfirmed = true
+      window.close()
+    }
+  })
 
   if (isDev && process.env['ELECTRON_RENDERER_URL']) {
     void window.loadURL(process.env['ELECTRON_RENDERER_URL'])
@@ -51,9 +118,28 @@ function registerIpc(): void {
   ipcMain.handle('app:info', () => ({
     version: app.getVersion(),
     channel: process.env['UPDATE_CHANNEL'] ?? 'modern',
-    buildCode: process.env['BUILD_CODE'] ?? 'dev'
+    buildCode: process.env['BUILD_CODE'] ?? 'dev',
+    platform: process.platform,
+    electron: process.versions.electron,
+    noticeVersion: NOTICE_VERSION
   }))
 
+  // --- settings & consent ---
+  ipcMain.handle('settings:get', () => ({
+    ...store.get(),
+    needsConsent: store.needsConsent()
+  }))
+  ipcMain.handle('settings:patch', (_event, raw: unknown) =>
+    store.patch(SettingsPatch.parse(raw))
+  )
+  ipcMain.handle('consent:set', (_event, raw: unknown) => {
+    const value = Consent.parse(raw)
+    return store.patch({
+      consent: { ...value, decidedAt: new Date().toISOString(), noticeVersion: NOTICE_VERSION }
+    })
+  })
+
+  // --- files & parsing ---
   ipcMain.handle('files:pick', async () => {
     const result = await dialog.showOpenDialog({
       title: 'Select invoices',
@@ -65,19 +151,46 @@ function registerIpc(): void {
 
   ipcMain.handle('invoice:parse', async (_event, raw: unknown) => {
     const { paths } = PathList.parse(raw)
-    const results = []
-    for (const path of paths) {
-      try {
-        results.push(await sidecar.call('parse', { path }))
-      } catch (error) {
-        results.push({
-          source_file: path,
-          error: error instanceof Error ? error.message : 'Parse failed',
-          is_blocked: true
-        })
+    busyReason = 'An import'
+    try {
+      const results: ParsedInvoice[] = []
+      for (const path of paths) {
+        try {
+          const parsed = await sidecar.call<ParsedInvoice>('parse', { path })
+          const duplicate = history.findDuplicate(
+            parsed.sha256 ?? '',
+            parsed.buyer_gstin ?? null,
+            parsed.invoice_no ?? null
+          )
+          const record = history.add({
+            sourceFile: parsed.source_file,
+            sha256: parsed.sha256 ?? '',
+            invoiceNo: parsed.invoice_no ?? null,
+            invoiceDate: parsed.invoice_date ?? null,
+            party: parsed.buyer_name ?? null,
+            gstin: parsed.buyer_gstin ?? null,
+            supplyType: parsed.supply_type ?? null,
+            rows: parsed.line_items?.length ?? 0,
+            taxable: parsed.totals?.['taxable'] ?? null,
+            taxTotal: parsed.totals?.['tax_total'] ?? null,
+            grandTotal: parsed.totals?.['computed_grand_total'] ?? null,
+            tieOutDelta: parsed.totals?.['tie_out_delta'] ?? null,
+            blocked: Boolean(parsed.is_blocked),
+            warnings: (parsed.findings ?? []).map((f) => f.rule_code)
+          })
+          results.push({ ...parsed, historyId: record.id, duplicateOf: duplicate?.id ?? null } as ParsedInvoice)
+        } catch (error) {
+          results.push({
+            source_file: path,
+            error: error instanceof Error ? error.message : 'Parse failed',
+            is_blocked: true
+          })
+        }
       }
+      return results
+    } finally {
+      busyReason = null
     }
-    return results
   })
 
   ipcMain.handle('export:pickDir', async () => {
@@ -85,18 +198,132 @@ function registerIpc(): void {
       title: 'Choose export folder',
       properties: ['openDirectory', 'createDirectory']
     })
-    return result.canceled ? null : result.filePaths[0]
+    if (result.canceled) return null
+    const dir = result.filePaths[0]
+    if (dir) store.patch({ lastExportDir: dir })
+    return dir ?? null
   })
 
   ipcMain.handle('export:run', async (_event, raw: unknown) => {
     const args = ExportArgs.parse(raw)
-    // The gate is re-run here. The disabled button in the renderer is UX only.
-    return sidecar.call('export', args)
+    busyReason = 'An export'
+    try {
+      // The gate is re-run here. The disabled button in the renderer is UX only.
+      return await sidecar.call('export', { ...args, out: args.out || outputDir('registers') })
+    } finally {
+      busyReason = null
+    }
+  })
+
+  // --- history (paginated CRUD; financial records are soft-deleted only) ---
+  const HistoryQuery = z.object({
+    page: z.number().int().min(1).max(10_000).optional(),
+    pageSize: z.number().int().min(5).max(200).optional(),
+    query: z.string().max(200).optional(),
+    includeDeleted: z.boolean().optional()
+  })
+  const HistoryId = z.object({ id: z.string().uuid() })
+  const HistoryPatch = HistoryId.extend({
+    note: z.string().max(2000).optional(),
+    invoiceNo: z.string().max(120).optional(),
+    party: z.string().max(300).optional()
+  })
+
+  ipcMain.handle('history:list', (_event, raw: unknown) => history.list(HistoryQuery.parse(raw ?? {})))
+  ipcMain.handle('history:get', (_event, raw: unknown) => history.get(HistoryId.parse(raw).id))
+  ipcMain.handle('history:update', (_event, raw: unknown) => {
+    const { id, ...patch } = HistoryPatch.parse(raw)
+    return history.update(id, patch)
+  })
+  ipcMain.handle('history:remove', (_event, raw: unknown) => history.remove(HistoryId.parse(raw).id))
+  ipcMain.handle('history:restore', (_event, raw: unknown) => history.restore(HistoryId.parse(raw).id))
+
+  /** Re-export a single historical record to a folder the user chooses. */
+  ipcMain.handle('history:download', async (_event, raw: unknown) => {
+    const record = history.get(HistoryId.parse(raw).id)
+    if (!record) throw new Error('That record no longer exists.')
+    const exported = await sidecar.call<{ path: string }>('export', {
+      paths: [record.sourceFile],
+      out: outputDir('registers')
+    })
+    history.recordExport([record.id], exported.path)
+    return exported
+  })
+
+  // --- download location ---
+  ipcMain.handle('paths:info', () => layoutPreview())
+  ipcMain.handle('paths:pick', async () => {
+    const result = await dialog.showOpenDialog({
+      title: 'Choose where Utility saves files',
+      properties: ['openDirectory', 'createDirectory']
+    })
+    if (result.canceled || !result.filePaths[0]) return layoutPreview()
+    store.patch({ downloadDir: result.filePaths[0] })
+    return layoutPreview()
+  })
+  ipcMain.handle('paths:reset', () => {
+    store.patch({ downloadDir: undefined })
+    return layoutPreview()
+  })
+  ipcMain.handle('paths:reveal', () => {
+    const dir = baseDir()
+    mkdirSync(dir, { recursive: true })
+    void shell.openPath(dir)
+  })
+
+  // --- spreadsheets ---
+  ipcMain.handle('sheet:pick', async () => {
+    const result = await dialog.showOpenDialog({
+      title: 'Open spreadsheet',
+      properties: ['openFile'],
+      filters: [{ name: 'Spreadsheets', extensions: ['xlsx', 'xlsm', 'csv'] }]
+    })
+    return result.canceled ? null : (result.filePaths[0] ?? null)
+  })
+  ipcMain.handle('sheet:read', (_event, raw: unknown) =>
+    sidecar.call('sheet.read', SheetPath.parse(raw))
+  )
+  ipcMain.handle('sheet:write', (_event, raw: unknown) =>
+    sidecar.call('sheet.write', SheetSave.parse(raw))
+  )
+
+  // --- feedback ---
+  ipcMain.handle('feedback:send', (_event, raw: unknown) => {
+    const value = Feedback.parse(raw)
+    // Server delivery is not wired yet. Rather than pretend it sent, queue it
+    // durably and tell the UI it is pending.
+    const queue = join(app.getPath('userData'), 'feedback-queue.jsonl')
+    try {
+      const line = JSON.stringify({
+        ...value,
+        at: new Date().toISOString(),
+        version: app.getVersion()
+      })
+      appendFileSync(queue, line + '\n', 'utf8')
+      return { status: 'queued' as const, queue }
+    } catch (error) {
+      return {
+        status: 'failed' as const,
+        error: error instanceof Error ? error.message : 'Could not save feedback'
+      }
+    }
+  })
+
+  // --- updates ---
+  ipcMain.handle('updates:check', async () => {
+    if (isDev) return { status: 'dev' as const }
+    // electron-updater is configured per channel, but the feed is not published
+    // yet. Report honestly instead of showing a fake "up to date".
+    return { status: 'unconfigured' as const, channel: process.env['UPDATE_CHANNEL'] ?? 'modern' }
   })
 
   ipcMain.handle('shell:showItem', (_event, raw: unknown) => {
-    const path = z.string().min(1).parse(raw)
-    shell.showItemInFolder(path)
+    shell.showItemInFolder(z.string().min(1).parse(raw))
+  })
+  ipcMain.handle('shell:openExternal', (_event, raw: unknown) => {
+    const url = z.string().url().parse(raw)
+    // Allowlisted: the renderer must not be able to launch arbitrary URLs.
+    if (/^https:\/\/(www\.)?patienceai\.in(\/|$)/.test(url)) void shell.openExternal(url)
   })
 }
 
