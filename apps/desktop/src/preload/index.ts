@@ -18,7 +18,6 @@ export interface AppInfo {
 export interface Settings {
   theme: 'light' | 'dark' | 'system'
   confirmOnExit: boolean
-  serverUrl?: string
   lastExportDir?: string
   consent?: { analytics: boolean; cloudSync: boolean; decidedAt: string; noticeVersion: number }
   needsConsent: boolean
@@ -127,7 +126,13 @@ const api = {
   sync: {
     status: (): Promise<SyncStatus> => ipcRenderer.invoke('sync:status'),
     run: (): Promise<SyncOutcome> => ipcRenderer.invoke('sync:run'),
-    probe: (): Promise<{ ok: boolean; reason: string }> => ipcRenderer.invoke('sync:probe')
+    probe: (): Promise<{ ok: boolean; reason: string }> => ipcRenderer.invoke('sync:probe'),
+    serverSignIn: (email: string, password: string): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('sync:serverSignIn', { email, password }),
+    listRemote: (): Promise<{ name: string; bytes: number; sha256: string; at: string }[]> =>
+      ipcRenderer.invoke('sync:listRemote'),
+    restore: (name: string): Promise<{ ok: boolean; detail: string }> =>
+      ipcRenderer.invoke('sync:restore', { name })
   },
   history: {
     list: (options: {
@@ -156,7 +161,7 @@ const api = {
   },
   settings: {
     get: (): Promise<Settings> => ipcRenderer.invoke('settings:get'),
-    patch: (patch: Partial<Pick<Settings, 'theme' | 'confirmOnExit' | 'serverUrl'>>): Promise<Settings> =>
+    patch: (patch: Partial<Pick<Settings, 'theme' | 'confirmOnExit'>>): Promise<Settings> =>
       ipcRenderer.invoke('settings:patch', patch),
     setConsent: (analytics: boolean, cloudSync: boolean): Promise<Settings> =>
       ipcRenderer.invoke('consent:set', { analytics, cloudSync })

@@ -6,7 +6,16 @@ import { auth } from './auth'
 import { history } from './history'
 import { baseDir, layoutPreview, outputDir } from './paths'
 import { sidecar } from './sidecar'
-import { clearBackupKey, deriveBackupKey, runBackup, status as syncStatus } from './sync'
+import {
+  backendUrl,
+  clearBackupKey,
+  deriveBackupKey,
+  listRemote,
+  restoreRemote,
+  runBackup,
+  serverSignIn,
+  status as syncStatus
+} from './sync'
 import { NOTICE_VERSION, store } from './store'
 
 /** Shape the sidecar returns for a parsed invoice. Validated on arrival, not trusted. */
@@ -45,8 +54,7 @@ const SheetSave = z.object({
 const Consent = z.object({ analytics: z.boolean(), cloudSync: z.boolean() })
 const SettingsPatch = z.object({
   theme: z.enum(['light', 'dark', 'system']).optional(),
-  confirmOnExit: z.boolean().optional(),
-  serverUrl: z.union([z.string().url().max(300), z.literal('')]).optional()
+  confirmOnExit: z.boolean().optional()
 })
 const Feedback = z.object({
   kind: z.enum(['bug', 'idea', 'other']),
@@ -275,16 +283,28 @@ function registerIpc(): void {
   })
 
   ipcMain.handle('auth:status', () => auth.status())
-  ipcMain.handle('auth:signUp', (_event, raw: unknown) => {
+  ipcMain.handle('auth:signUp', async (_event, raw: unknown) => {
     const input = SignUp.parse(raw)
     const result = auth.signUp(input)
-    if (result.ok) deriveBackupKey(input.password)
+    if (result.ok) {
+      deriveBackupKey(input.password)
+      if (store.get().consent?.cloudSync === true) {
+        void serverSignIn(input.email, input.password, input.name)
+      }
+    }
     return result
   })
-  ipcMain.handle('auth:signIn', (_event, raw: unknown) => {
+  ipcMain.handle('auth:signIn', async (_event, raw: unknown) => {
     const { email, password } = Credentials.parse(raw)
     const result = auth.signIn(email, password)
-    if (result.ok) deriveBackupKey(password)
+    if (result.ok) {
+      deriveBackupKey(password)
+      // If cloud backup is on, establish the server session here so the
+      // operator never sees or configures anything about a backend.
+      if (store.get().consent?.cloudSync === true) {
+        void serverSignIn(email, password, result.account.name)
+      }
+    }
     return result
   })
   ipcMain.handle('auth:signOut', () => {
@@ -310,10 +330,8 @@ function registerIpc(): void {
   ipcMain.handle('sync:status', () => syncStatus())
   /** Probe the configured server so misconfiguration is visible before a backup. */
   ipcMain.handle('sync:probe', async () => {
-    const url = store.get().serverUrl?.trim()
-    if (!url) return { ok: false, reason: 'No server configured.' }
     try {
-      const response = await fetch(`${url.replace(/\/$/, '')}/healthz`, {
+      const response = await fetch(`${backendUrl()}/healthz`, {
         signal: AbortSignal.timeout(6000)
       })
       return response.ok
@@ -324,6 +342,15 @@ function registerIpc(): void {
     }
   })
   ipcMain.handle('sync:run', async () => runBackup())
+  ipcMain.handle('sync:serverSignIn', async (_event, raw: unknown) => {
+    const { email, password } = Credentials.parse(raw)
+    const account = auth.status().account
+    return serverSignIn(email, password, account?.name ?? email)
+  })
+  ipcMain.handle('sync:listRemote', async () => listRemote())
+  ipcMain.handle('sync:restore', async (_event, raw: unknown) =>
+    restoreRemote(z.object({ name: z.string().min(1).max(200) }).parse(raw).name)
+  )
 
   // --- download location ---
   ipcMain.handle('paths:info', () => layoutPreview())

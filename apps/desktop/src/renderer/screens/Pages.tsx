@@ -148,17 +148,14 @@ export function SettingsScreen({
 }: {
   info: AppInfo
   settings: SettingsShape | null
-  onPatch: (patch: Partial<Pick<SettingsShape, 'theme' | 'confirmOnExit' | 'serverUrl'>>) => void
+  onPatch: (patch: Partial<Pick<SettingsShape, 'theme' | 'confirmOnExit'>>) => void
   onConsent: (analytics: boolean, cloudSync: boolean) => void
 }): JSX.Element {
   const [update, setUpdate] = useState<{ status: string; channel?: string } | null>(null)
   const [checking, setChecking] = useState(false)
   const [paths, setPaths] = useState<PathsInfo | null>(null)
   const [licencesOpen, setLicencesOpen] = useState(false)
-  const [server, setServer] = useState('')
-  const [probe, setProbe] = useState<{ ok: boolean; reason: string } | null>(null)
 
-  useEffect(() => setServer(settings?.serverUrl ?? ''), [settings?.serverUrl])
 
   useEffect(() => setUpdate(null), [info.version])
   useEffect(() => {
@@ -299,53 +296,6 @@ export function SettingsScreen({
               {LICENCES.length} components
             </Typography>
           </Stack>
-        </Paper>
-      </Section>
-
-      <Section
-        title="Server"
-        subtitle="Leave empty to stay fully offline. Set it once the server is up — no reinstall needed."
-      >
-        <Paper variant="outlined" sx={{ p: 3 }}>
-          <Stack direction="row" spacing={1} alignItems="flex-start" flexWrap="wrap" useFlexGap>
-            <TextField
-              size="small"
-              label="Server address"
-              placeholder="https://api.patienceai.in"
-              value={server}
-              onChange={(e) => setServer(e.target.value)}
-              sx={{ minWidth: 320 }}
-              helperText="Used for cloud backup, updates and feedback delivery."
-            />
-            <Button
-              sx={{ mt: 0.5 }}
-              variant="contained"
-              onClick={() => {
-                onPatch({ serverUrl: server.trim() })
-                setProbe(null)
-              }}
-            >
-              Save
-            </Button>
-            <Button
-              sx={{ mt: 0.5 }}
-              disabled={!settings?.serverUrl}
-              onClick={() => void window.api.sync.probe().then(setProbe)}
-            >
-              Test connection
-            </Button>
-          </Stack>
-          {probe && (
-            <Alert severity={probe.ok ? 'success' : 'warning'} sx={{ mt: 2 }}>
-              {probe.reason}
-            </Alert>
-          )}
-          {!settings?.serverUrl && (
-            <Alert severity="info" sx={{ mt: 2 }}>
-              No server configured. The application is running entirely on this computer and makes
-              no network calls at all.
-            </Alert>
-          )}
         </Paper>
       </Section>
 

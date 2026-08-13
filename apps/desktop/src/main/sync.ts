@@ -1,6 +1,6 @@
 import { app } from 'electron'
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'node:crypto'
-import { gzipSync } from 'node:zlib'
+import { gzipSync, gunzipSync } from 'node:zlib'
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, statSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { auth } from './auth'
@@ -40,6 +40,98 @@ export interface SyncStatus {
 }
 
 let backupKey: Buffer | null = null
+/**
+ * Server session token, held in memory only. It is obtained by exchanging the
+ * same credentials the local account uses, so the operator signs in once.
+ */
+let serverToken: string | null = null
+
+export function setServerToken(token: string | null): void {
+  serverToken = token
+}
+
+/** Sign in (or register) against the configured server. Local auth is unaffected. */
+export async function serverSignIn(email: string, password: string, name: string): Promise<
+  { ok: true } | { ok: false; error: string }
+> {
+  const url = endpoint()
+  if (!url) return { ok: false, error: 'No server configured.' }
+  const base = url.replace(/\/$/, '')
+  const attempt = async (path: string, body: Record<string, string>) =>
+    fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(15000)
+    })
+  try {
+    let response = await attempt('/v1/auth/login', { email, password })
+    if (response.status === 401 || response.status === 404) {
+      // First time on this server: register the same credentials.
+      response = await attempt('/v1/auth/signup', { email, password, name })
+    }
+    if (!response.ok) {
+      const detail = (await response.json().catch(() => ({}))) as { error?: string }
+      return { ok: false, error: detail.error ?? `Server returned ${response.status}` }
+    }
+    const data = (await response.json()) as { token: string }
+    serverToken = data.token
+    return { ok: true }
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'Could not reach the server.' }
+  }
+}
+
+export interface RemoteBackup {
+  name: string
+  bytes: number
+  sha256: string
+  at: string
+}
+
+export async function listRemote(): Promise<RemoteBackup[]> {
+  const url = endpoint()
+  if (!url || !serverToken) return []
+  const response = await fetch(`${url.replace(/\/$/, '')}/v1/backups`, {
+    headers: { authorization: `Bearer ${serverToken}` },
+    signal: AbortSignal.timeout(15000)
+  })
+  if (!response.ok) return []
+  const data = (await response.json()) as { items: RemoteBackup[] }
+  return data.items ?? []
+}
+
+/**
+ * Restore on another machine. The bundle is decrypted locally with the key
+ * derived from the password, so a server compromise yields nothing readable.
+ */
+export async function restoreRemote(name: string): Promise<{ ok: boolean; detail: string }> {
+  const url = endpoint()
+  if (!url || !serverToken) return { ok: false, detail: 'Sign in to the server first.' }
+  if (!backupKey) return { ok: false, detail: 'Sign in before restoring.' }
+  const response = await fetch(`${url.replace(/\/$/, '')}/v1/backups/${encodeURIComponent(name)}`, {
+    headers: { authorization: `Bearer ${serverToken}` },
+    signal: AbortSignal.timeout(30000)
+  })
+  if (!response.ok) return { ok: false, detail: `Server returned ${response.status}` }
+  const blob = Buffer.from(await response.arrayBuffer())
+  let payload: Record<string, unknown>
+  try {
+    payload = JSON.parse(gunzipSync(decrypt(blob)).toString('utf8')) as Record<string, unknown>
+  } catch {
+    return { ok: false, detail: 'Could not decrypt. Is this the same account password?' }
+  }
+  // Write back only the data files; never the account vault.
+  const userData = app.getPath('userData')
+  let restored = 0
+  for (const file of ['history.json', 'settings.json']) {
+    const value = payload[file]
+    if (value == null) continue
+    writeFileSync(join(userData, file), JSON.stringify(value, null, 2), 'utf8')
+    restored++
+  }
+  return { ok: true, detail: `Restored ${restored} data file(s). Restart the app to see them.` }
+}
 
 /** Called on sign-in. Held in memory only -- never written to disk. */
 export function deriveBackupKey(password: string): void {
@@ -48,6 +140,7 @@ export function deriveBackupKey(password: string): void {
 
 export function clearBackupKey(): void {
   backupKey = null
+  serverToken = null
 }
 
 function stagingDir(): string {
@@ -95,11 +188,25 @@ function collect(): Buffer {
   return gzipSync(Buffer.from(JSON.stringify(payload), 'utf8'), { level: 9 })
 }
 
+/**
+ * The backend is part of the product, not a user setting. The address is never
+ * shown in the UI and cannot be edited from it -- an operator pointing the app
+ * at an arbitrary host would be an exfiltration path for client financial data,
+ * and it is not a decision an accountant should be asked to make.
+ *
+ * The env var is a development override only; it is not read in packaged builds.
+ */
+const BACKEND_URL = 'https://patienceai.in/utility-api'
+
+export function backendUrl(): string {
+  return endpoint() ?? BACKEND_URL
+}
+
 function endpoint(): string | null {
-  // Setting first so an operator can point at the server without a rebuild;
-  // the env var stays as a development override.
-  const configured = store.get().serverUrl?.trim()
-  return configured || process.env['UTILITY_SYNC_ENDPOINT'] || null
+  if (!app.isPackaged && process.env['UTILITY_SYNC_ENDPOINT']) {
+    return process.env['UTILITY_SYNC_ENDPOINT']
+  }
+  return BACKEND_URL
 }
 
 export function status(): SyncStatus {
@@ -158,9 +265,20 @@ export async function runBackup(): Promise<SyncOutcome> {
     }
   }
 
+  const token = serverToken
+  if (!token) {
+    const path = join(stagingDir(), name)
+    writeFileSync(path, blob)
+    return {
+      status: 'staged',
+      bytes: blob.length,
+      path,
+      reason: 'Not signed in to the server yet; the backup is held on this computer.'
+    }
+  }
   const response = await fetch(`${url.replace(/\/$/, '')}/v1/backups/${encodeURIComponent(name)}`, {
     method: 'PUT',
-    headers: { 'content-type': 'application/octet-stream' },
+    headers: { 'content-type': 'application/octet-stream', authorization: `Bearer ${token}` },
     body: new Uint8Array(blob)
   })
   if (!response.ok) {

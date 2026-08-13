@@ -315,7 +315,7 @@ export default function Account({
                 <Chip
                   size="small"
                   variant="outlined"
-                  label={sync.endpointConfigured ? 'Server connected' : 'Server not connected'}
+                  label={sync.endpointConfigured ? 'Backup service available' : 'Backup service unavailable'}
                 />
                 {sync.pending > 0 && (
                   <Chip size="small" variant="outlined" label={`${sync.pending} held locally · ${bytes(sync.pendingBytes)}`} />
@@ -324,8 +324,8 @@ export default function Account({
 
               {!sync.endpointConfigured && (
                 <Alert severity="info" sx={{ mb: 2 }}>
-                  The account server is not connected yet. Backups are still created and encrypted,
-                  and are held on this computer until it is — nothing is silently discarded.
+                  The backup service is not reachable right now. Backups are still created and
+                  encrypted, and are held on this computer until it is — nothing is discarded.
                 </Alert>
               )}
 
