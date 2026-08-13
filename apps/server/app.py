@@ -650,3 +650,89 @@ def admin_page() -> Response:
     if not page.is_file():
         raise HTTPException(404, "Admin panel not installed.")
     return Response(page.read_text(encoding="utf-8"), media_type="text/html")
+
+
+# --- password reset by email OTP -------------------------------------------
+OTP_TTL = timedelta(minutes=15)
+
+OTP_SCHEMA = """
+CREATE TABLE IF NOT EXISTS otps (
+  email      text NOT NULL,
+  code_hash  text NOT NULL,
+  expires_at timestamptz NOT NULL,
+  used       boolean NOT NULL DEFAULT false,
+  attempts   int NOT NULL DEFAULT 0,
+  at         timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS otps_email_idx ON otps (email, expires_at DESC);
+"""
+
+
+class OtpRequest(BaseModel):
+    email: EmailStr
+
+
+class OtpVerify(BaseModel):
+    email: EmailStr
+    code: str = Field(min_length=4, max_length=8)
+
+
+@app.post("/v1/auth/otp/request")
+def otp_request(body: OtpRequest, request: Request) -> dict[str, bool]:
+    """Send a one-time code. Always reports success.
+
+    Reporting whether an address exists would turn this into an account
+    enumeration oracle, so the response is identical either way.
+    """
+    ip = client_ip(request)
+    rate_limit(f"otp:{ip}", limit=6, window_seconds=3600)
+    rate_limit(f"otp:{body.email.lower()}", limit=4, window_seconds=3600)
+
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    with db() as conn:
+        conn.execute(OTP_SCHEMA)
+        conn.execute(
+            "INSERT INTO otps (email, code_hash, expires_at) VALUES (%s, %s, %s)",
+            (body.email.lower(), hashlib.sha256(code.encode()).hexdigest(), now() + OTP_TTL),
+        )
+    send_mail(
+        body.email,
+        "Your Utility verification code",
+        f"<p>Your verification code is:</p>"
+        f"<p style='font-size:26px;font-weight:700;letter-spacing:6px'>{code}</p>"
+        f"<p>It expires in 15 minutes. If you did not ask for this, ignore this email "
+        f"and your password will stay unchanged.</p>",
+    )
+    log(None, "otp_sent", ip)
+    return {"ok": True}
+
+
+@app.post("/v1/auth/otp/verify")
+def otp_verify(body: OtpVerify, request: Request) -> dict[str, bool]:
+    rate_limit(f"otpverify:{client_ip(request)}", limit=15, window_seconds=900)
+    digest = hashlib.sha256(body.code.strip().encode()).hexdigest()
+    with db() as conn:
+        conn.execute(OTP_SCHEMA)
+        row = conn.execute(
+            "SELECT ctid, attempts FROM otps"
+            " WHERE email = %s AND code_hash = %s AND used = false AND expires_at > %s"
+            " ORDER BY at DESC LIMIT 1",
+            (body.email.lower(), digest, now()),
+        ).fetchone()
+        if not row:
+            # Count the failure against the newest live code so guessing is bounded.
+            conn.execute(
+                "UPDATE otps SET attempts = attempts + 1 WHERE ctid = ("
+                "  SELECT ctid FROM otps WHERE email = %s AND used = false"
+                "  AND expires_at > %s ORDER BY at DESC LIMIT 1)",
+                (body.email.lower(), now()),
+            )
+            conn.execute(
+                "UPDATE otps SET used = true WHERE email = %s AND attempts >= 5",
+                (body.email.lower(),),
+            )
+            raise HTTPException(400, "That code is not right, or it has expired.")
+        # Single use.
+        conn.execute("UPDATE otps SET used = true WHERE ctid = %s", (row[0],))
+    log(None, "otp_verified")
+    return {"ok": True}

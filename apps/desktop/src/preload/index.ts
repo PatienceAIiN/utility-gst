@@ -172,6 +172,11 @@ const api = {
     signOut: (): Promise<AuthStatus> => ipcRenderer.invoke('auth:signOut'),
     reset: (email: string, recoveryCode: string, password: string): Promise<AuthResult> =>
       ipcRenderer.invoke('auth:reset', { email, recoveryCode, password }),
+    otpRequest: (email: string): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('auth:otpRequest', email),
+    otpReset: (email: string, code: string, password: string): Promise<AuthResult> =>
+      ipcRenderer.invoke('auth:otpReset', { email, code, password }),
+    deleteAccount: (): Promise<AuthStatus> => ipcRenderer.invoke('auth:deleteAccount'),
     updateProfile: (patch: { name?: string; org?: string; gstin?: string }): Promise<AuthResult> =>
       ipcRenderer.invoke('auth:updateProfile', patch),
     changePassword: (current: string, next: string): Promise<AuthResult> =>

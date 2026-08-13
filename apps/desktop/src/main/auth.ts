@@ -278,6 +278,39 @@ class Auth {
     return { ok: true, account: this.toPublic(account) }
   }
 
+  /** The email on the local account, so an OTP can be sent to it. */
+  accountEmail(): string | null {
+    return this.load().account?.email ?? null
+  }
+
+  /**
+   * Reset after an out-of-band email OTP was verified by the server. A fresh
+   * recovery code is issued because the old one is no longer trustworthy.
+   */
+  resetVerified(email: string, newPassword: string): AuthResult & { recoveryCode?: string } {
+    const { account } = this.load()
+    if (!account) return { ok: false, error: 'No account on this computer yet.' }
+    if (account.email !== email.trim().toLowerCase()) {
+      return { ok: false, error: 'That email does not match this computer\u2019s account.' }
+    }
+    if (newPassword.length < 10) return { ok: false, error: 'Use at least 10 characters.' }
+    const fresh = newRecoveryCode()
+    account.password = hashPassword(newPassword)
+    account.recoveryHash = sha256(fresh)
+    account.failedAttempts = 0
+    account.lockedUntil = undefined
+    this.persist()
+    this.signedIn = true
+    return { ok: true, account: this.toPublic(account), recoveryCode: fresh }
+  }
+
+  /** Remove the local account entirely. Irreversible by design. */
+  deleteAccount(): void {
+    this.vault = { account: null }
+    this.persist()
+    this.signedIn = false
+  }
+
   /** Identifier used to namespace remote backups. Not the email itself. */
   accountKey(): string | null {
     const { account } = this.load()

@@ -421,6 +421,58 @@ function registerIpc(): void {
     if (result.ok) deriveBackupKey(password)
     return result
   })
+  ipcMain.handle('auth:otpRequest', async (_event, raw: unknown) => {
+    const email = z.string().email().max(320).parse(raw)
+    try {
+      const response = await fetch(`${backendUrl()}/v1/auth/otp/request`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email }),
+        signal: AbortSignal.timeout(20000)
+      })
+      return response.ok
+        ? { ok: true }
+        : { ok: false, error: 'Could not send the code. Try again shortly.' }
+    } catch {
+      return { ok: false, error: 'No connection. A code can only be sent when online.' }
+    }
+  })
+
+  ipcMain.handle('auth:otpReset', async (_event, raw: unknown) => {
+    const { email, code, password } = z
+      .object({
+        email: z.string().email().max(320),
+        code: z.string().min(4).max(8),
+        password: z.string().min(1).max(1024)
+      })
+      .parse(raw)
+    try {
+      const response = await fetch(`${backendUrl()}/v1/auth/otp/verify`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email, code }),
+        signal: AbortSignal.timeout(20000)
+      })
+      if (!response.ok) {
+        const detail = (await response.json().catch(() => ({}))) as { error?: string }
+        return { ok: false, error: detail.error ?? 'That code is not right.' }
+      }
+    } catch {
+      return { ok: false, error: 'No connection. Verifying a code needs the internet.' }
+    }
+    const result = auth.resetVerified(email, password)
+    if (result.ok) deriveBackupKey(password)
+    return result
+  })
+
+  ipcMain.handle('auth:deleteAccount', () => {
+    auth.deleteAccount()
+    clearBackupKey()
+    const current = store.get().consent
+    if (current?.cloudSync) store.patch({ consent: { ...current, cloudSync: false } })
+    return auth.status()
+  })
+
   ipcMain.handle('auth:updateProfile', (_event, raw: unknown) => auth.updateProfile(Profile.parse(raw)))
   ipcMain.handle('auth:changePassword', (_event, raw: unknown) => {
     const { current, next } = ChangePassword.parse(raw)
