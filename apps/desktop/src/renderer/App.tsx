@@ -7,6 +7,7 @@ import ReceiptLongIcon from '@mui/icons-material/ReceiptLong'
 import HistoryIcon from '@mui/icons-material/History'
 import TableChartIcon from '@mui/icons-material/TableChart'
 import SettingsIcon from '@mui/icons-material/Settings'
+import PersonOutlineIcon from '@mui/icons-material/PersonOutline'
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined'
 import FeedbackOutlinedIcon from '@mui/icons-material/FeedbackOutlined'
 import DarkModeIcon from '@mui/icons-material/DarkMode'
@@ -17,14 +18,16 @@ import { Brand, ConfirmDialog, ConsentBanner, FeedbackDialog, type ConfirmSpec }
 import Invoices from './screens/Invoices'
 import History from './screens/History'
 import Sheets from './screens/Sheets'
+import Account from './screens/Account'
 import { About, SettingsScreen } from './screens/Pages'
 
-type Route = 'invoices' | 'history' | 'sheets' | 'settings' | 'about'
+type Route = 'invoices' | 'history' | 'sheets' | 'profile' | 'settings' | 'about'
 
 const NAV: { key: Route; label: string; icon: JSX.Element }[] = [
   { key: 'invoices', label: 'Invoices', icon: <ReceiptLongIcon /> },
   { key: 'history', label: 'History', icon: <HistoryIcon /> },
   { key: 'sheets', label: 'Spreadsheets', icon: <TableChartIcon /> },
+  { key: 'profile', label: 'Profile', icon: <PersonOutlineIcon /> },
   { key: 'settings', label: 'Settings', icon: <SettingsIcon /> },
   { key: 'about', label: 'About', icon: <InfoOutlinedIcon /> }
 ]
@@ -137,6 +140,13 @@ export default function App(): JSX.Element {
                 {route === 'invoices' && <Invoices confirm={confirm} />}
                 {route === 'history' && <History confirm={confirm} />}
                 {route === 'sheets' && <Sheets confirm={confirm} />}
+                {route === 'profile' && (
+                  <Account
+                    cloudEnabled={settings?.consent?.cloudSync === true}
+                    onCloudToggle={(on) => setConsent(settings?.consent?.analytics ?? false, on)}
+                    confirm={confirm}
+                  />
+                )}
                 {route === 'settings' && info && (
                   <SettingsScreen
                     info={info}

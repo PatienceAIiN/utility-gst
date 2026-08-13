@@ -2,9 +2,11 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { appendFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { z } from 'zod'
+import { auth } from './auth'
 import { history } from './history'
 import { baseDir, layoutPreview, outputDir } from './paths'
 import { sidecar } from './sidecar'
+import { clearBackupKey, deriveBackupKey, runBackup, status as syncStatus } from './sync'
 import { NOTICE_VERSION, store } from './store'
 
 /** Shape the sidecar returns for a parsed invoice. Validated on arrival, not trusted. */
@@ -249,6 +251,63 @@ function registerIpc(): void {
     history.recordExport([record.id], exported.path)
     return exported
   })
+
+  // --- accounts (entirely local unless cloud backup is switched on) ---
+  const Credentials = z.object({
+    email: z.string().email().max(320),
+    password: z.string().min(1).max(1024)
+  })
+  const SignUp = Credentials.extend({
+    name: z.string().min(1).max(200),
+    org: z.string().max(200).optional(),
+    gstin: z.string().max(20).optional()
+  })
+  const Reset = Credentials.extend({ recoveryCode: z.string().min(4).max(64) })
+  const Profile = z.object({
+    name: z.string().max(200).optional(),
+    org: z.string().max(200).optional(),
+    gstin: z.string().max(20).optional()
+  })
+  const ChangePassword = z.object({
+    current: z.string().min(1).max(1024),
+    next: z.string().min(1).max(1024)
+  })
+
+  ipcMain.handle('auth:status', () => auth.status())
+  ipcMain.handle('auth:signUp', (_event, raw: unknown) => {
+    const input = SignUp.parse(raw)
+    const result = auth.signUp(input)
+    if (result.ok) deriveBackupKey(input.password)
+    return result
+  })
+  ipcMain.handle('auth:signIn', (_event, raw: unknown) => {
+    const { email, password } = Credentials.parse(raw)
+    const result = auth.signIn(email, password)
+    if (result.ok) deriveBackupKey(password)
+    return result
+  })
+  ipcMain.handle('auth:signOut', () => {
+    auth.signOut()
+    clearBackupKey()
+    return auth.status()
+  })
+  ipcMain.handle('auth:reset', (_event, raw: unknown) => {
+    const { email, recoveryCode, password } = Reset.parse(raw)
+    const result = auth.resetPassword(email, recoveryCode, password)
+    if (result.ok) deriveBackupKey(password)
+    return result
+  })
+  ipcMain.handle('auth:updateProfile', (_event, raw: unknown) => auth.updateProfile(Profile.parse(raw)))
+  ipcMain.handle('auth:changePassword', (_event, raw: unknown) => {
+    const { current, next } = ChangePassword.parse(raw)
+    const result = auth.changePassword(current, next)
+    if (result.ok) deriveBackupKey(next)
+    return result
+  })
+
+  // --- cloud backup ---
+  ipcMain.handle('sync:status', () => syncStatus())
+  ipcMain.handle('sync:run', async () => runBackup())
 
   // --- download location ---
   ipcMain.handle('paths:info', () => layoutPreview())

@@ -66,9 +66,66 @@ export interface PathsInfo {
   entries: string[]
 }
 
+export interface PublicAccount {
+  id: string
+  email: string
+  name: string
+  org?: string
+  gstin?: string
+  createdAt: string
+  lastSignInAt?: string
+}
+export type AuthResult =
+  | { ok: true; account: PublicAccount; recoveryCode?: string }
+  | { ok: false; error: string; lockedForSeconds?: number }
+export interface AuthStatus {
+  hasAccount: boolean
+  signedIn: boolean
+  account: PublicAccount | null
+}
+export interface SyncStatus {
+  enabled: boolean
+  signedIn: boolean
+  ready: boolean
+  endpointConfigured: boolean
+  pending: number
+  pendingBytes: number
+  lastBundleAt: string | null
+  stagingDir: string
+}
+export interface SyncOutcome {
+  status: 'uploaded' | 'staged' | 'skipped'
+  reason?: string
+  bytes?: number
+  path?: string
+}
+
 const api = {
   app: {
     info: (): Promise<AppInfo> => ipcRenderer.invoke('app:info')
+  },
+  auth: {
+    status: (): Promise<AuthStatus> => ipcRenderer.invoke('auth:status'),
+    signUp: (input: {
+      email: string
+      password: string
+      name: string
+      org?: string
+      gstin?: string
+    }): Promise<AuthResult> => ipcRenderer.invoke('auth:signUp', input),
+    signIn: (email: string, password: string): Promise<AuthResult> =>
+      ipcRenderer.invoke('auth:signIn', { email, password }),
+    signOut: (): Promise<AuthStatus> => ipcRenderer.invoke('auth:signOut'),
+    reset: (email: string, recoveryCode: string, password: string): Promise<AuthResult> =>
+      ipcRenderer.invoke('auth:reset', { email, recoveryCode, password }),
+    updateProfile: (patch: { name?: string; org?: string; gstin?: string }): Promise<AuthResult> =>
+      ipcRenderer.invoke('auth:updateProfile', patch),
+    changePassword: (current: string, next: string): Promise<AuthResult> =>
+      ipcRenderer.invoke('auth:changePassword', { current, next })
+  },
+  sync: {
+    status: (): Promise<SyncStatus> => ipcRenderer.invoke('sync:status'),
+    run: (): Promise<SyncOutcome> => ipcRenderer.invoke('sync:run')
   },
   history: {
     list: (options: {

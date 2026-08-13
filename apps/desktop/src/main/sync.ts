@@ -1,0 +1,185 @@
+import { app } from 'electron'
+import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'node:crypto'
+import { gzipSync } from 'node:zlib'
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, statSync, unlinkSync } from 'node:fs'
+import { join } from 'node:path'
+import { auth } from './auth'
+import { store } from './store'
+
+/**
+ * Consent-gated cloud backup.
+ *
+ * Nothing here runs unless the operator has switched cloud backup on AND is
+ * signed in. When it is off, the app is entirely local.
+ *
+ * The bundle is encrypted on this machine before it goes anywhere, with a key
+ * derived from the account password (scrypt). The password itself is never
+ * sent, and the server cannot read the contents -- it stores an opaque blob.
+ * That is what makes the restore-on-another-machine story safe.
+ *
+ * The client deliberately holds NO object-storage credentials. Embedding them
+ * would violate the brief's §13 and, in this deployment, would ship a token
+ * with write access to a bucket holding other products' live assets. Uploads
+ * therefore go through our own authenticated API, which owns the credentials.
+ * Until that endpoint exists, bundles are staged locally and reported as
+ * pending rather than silently dropped.
+ */
+
+const MAGIC = 'UTLY1'
+const KEY_SALT = 'utility-backup-v1'
+
+export interface SyncStatus {
+  enabled: boolean
+  signedIn: boolean
+  ready: boolean
+  endpointConfigured: boolean
+  pending: number
+  pendingBytes: number
+  lastBundleAt: string | null
+  stagingDir: string
+}
+
+let backupKey: Buffer | null = null
+
+/** Called on sign-in. Held in memory only -- never written to disk. */
+export function deriveBackupKey(password: string): void {
+  backupKey = scryptSync(password, KEY_SALT, 32, { N: 1 << 15, r: 8, p: 1, maxmem: 256 * 1024 * 1024 })
+}
+
+export function clearBackupKey(): void {
+  backupKey = null
+}
+
+function stagingDir(): string {
+  const dir = join(app.getPath('userData'), 'pending-sync')
+  mkdirSync(dir, { recursive: true })
+  return dir
+}
+
+function encrypt(plain: Buffer): Buffer {
+  if (!backupKey) throw new Error('Sign in before backing up.')
+  const iv = randomBytes(12)
+  const cipher = createCipheriv('aes-256-gcm', backupKey, iv)
+  const body = Buffer.concat([cipher.update(plain), cipher.final()])
+  // MAGIC | iv(12) | tag(16) | ciphertext
+  return Buffer.concat([Buffer.from(MAGIC, 'utf8'), iv, cipher.getAuthTag(), body])
+}
+
+export function decrypt(blob: Buffer): Buffer {
+  if (!backupKey) throw new Error('Sign in before restoring.')
+  const magic = blob.subarray(0, MAGIC.length).toString('utf8')
+  if (magic !== MAGIC) throw new Error('That file is not a Utility backup.')
+  const iv = blob.subarray(MAGIC.length, MAGIC.length + 12)
+  const tag = blob.subarray(MAGIC.length + 12, MAGIC.length + 28)
+  const body = blob.subarray(MAGIC.length + 28)
+  const decipher = createDecipheriv('aes-256-gcm', backupKey, iv)
+  decipher.setAuthTag(tag)
+  return Buffer.concat([decipher.update(body), decipher.final()])
+}
+
+/** Everything backed up. The account vault is NOT included -- credentials never leave. */
+function collect(): Buffer {
+  const userData = app.getPath('userData')
+  const payload: Record<string, unknown> = { version: 1, at: new Date().toISOString() }
+  for (const name of ['history.json', 'settings.json'] as const) {
+    const path = join(userData, name)
+    if (existsSync(path)) {
+      try {
+        payload[name] = JSON.parse(readFileSync(path, 'utf8'))
+      } catch {
+        // A corrupt local file should not abort the whole backup.
+        payload[name] = null
+      }
+    }
+  }
+  return gzipSync(Buffer.from(JSON.stringify(payload), 'utf8'), { level: 9 })
+}
+
+function endpoint(): string | null {
+  return process.env['UTILITY_SYNC_ENDPOINT'] ?? null
+}
+
+export function status(): SyncStatus {
+  const settings = store.get()
+  const dir = stagingDir()
+  const files = existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith('.utlybak')) : []
+  const bytes = files.reduce((n, f) => n + statSync(join(dir, f)).size, 0)
+  const enabled = settings.consent?.cloudSync === true
+  const signedIn = auth.status().signedIn
+  return {
+    enabled,
+    signedIn,
+    ready: enabled && signedIn && backupKey !== null,
+    endpointConfigured: endpoint() !== null,
+    pending: files.length,
+    pendingBytes: bytes,
+    lastBundleAt: files.length
+      ? new Date(Math.max(...files.map((f) => statSync(join(dir, f)).mtimeMs))).toISOString()
+      : null,
+    stagingDir: dir
+  }
+}
+
+export interface SyncOutcome {
+  status: 'uploaded' | 'staged' | 'skipped'
+  reason?: string
+  bytes?: number
+  path?: string
+}
+
+export async function runBackup(): Promise<SyncOutcome> {
+  const settings = store.get()
+  if (settings.consent?.cloudSync !== true) {
+    return { status: 'skipped', reason: 'Cloud backup is switched off.' }
+  }
+  if (!auth.status().signedIn || !backupKey) {
+    return { status: 'skipped', reason: 'Sign in to back up.' }
+  }
+
+  const blob = encrypt(collect())
+  const key = auth.accountKey() ?? 'unknown'
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const name = `${key}-${stamp}.utlybak`
+
+  const url = endpoint()
+  if (!url) {
+    // No server yet. Stage it so the data is real and ready, and say so.
+    const path = join(stagingDir(), name)
+    writeFileSync(path, blob)
+    prune()
+    return {
+      status: 'staged',
+      bytes: blob.length,
+      path,
+      reason: 'The account server is not connected yet, so the backup is held on this computer.'
+    }
+  }
+
+  const response = await fetch(`${url.replace(/\/$/, '')}/v1/backups/${encodeURIComponent(name)}`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/octet-stream' },
+    body: new Uint8Array(blob)
+  })
+  if (!response.ok) {
+    const path = join(stagingDir(), name)
+    writeFileSync(path, blob)
+    return { status: 'staged', bytes: blob.length, path, reason: `Server refused (${response.status}); kept locally.` }
+  }
+  return { status: 'uploaded', bytes: blob.length }
+}
+
+/** Keep staging bounded: newest 10 bundles. Old encrypted copies are not useful. */
+function prune(keep = 10): void {
+  const dir = stagingDir()
+  const files = readdirSync(dir)
+    .filter((f) => f.endsWith('.utlybak'))
+    .map((f) => ({ f, m: statSync(join(dir, f)).mtimeMs }))
+    .sort((a, b) => b.m - a.m)
+  for (const { f } of files.slice(keep)) {
+    try {
+      unlinkSync(join(dir, f))
+    } catch {
+      /* best effort */
+    }
+  }
+}
