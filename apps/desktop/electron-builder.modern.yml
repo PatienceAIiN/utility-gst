@@ -31,7 +31,10 @@ nsis:
   createDesktopShortcut: true
   shortcutName: Utility
 publish:
-  provider: generic
-  # Channel-specific feed: a Win7 machine must never be offered a modern build.
-  url: https://updates.patienceai.in/utility/modern/
+  # GitHub Releases is the update feed. The repository is public, so clients
+  # need no credentials. Each channel uses its own channel file so a Windows 7
+  # machine is never offered a modern build.
+  provider: github
+  owner: PatienceAIiN
+  repo: utility-gst
   channel: latest

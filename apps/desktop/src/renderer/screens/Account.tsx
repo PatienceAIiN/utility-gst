@@ -322,10 +322,10 @@ export default function Account({
                 )}
               </Stack>
 
-              {!sync.endpointConfigured && (
+              {sync.pending > 0 && (
                 <Alert severity="info" sx={{ mb: 2 }}>
-                  The backup service is not reachable right now. Backups are still created and
-                  encrypted, and are held on this computer until it is — nothing is discarded.
+                  {sync.pending} backup(s) are held on this computer and will upload on the next
+                  successful backup. Nothing is discarded.
                 </Alert>
               )}
 

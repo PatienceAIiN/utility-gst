@@ -4,7 +4,9 @@ import { join } from 'node:path'
 import { z } from 'zod'
 import { auth } from './auth'
 import { history } from './history'
+import { buildMenu } from './menu'
 import { mesh, type Permission } from './mesh'
+import { check as checkUpdates, currentState, initUpdater, installNow } from './updater'
 import { baseDir, layoutPreview, outputDir } from './paths'
 import { sidecar } from './sidecar'
 import {
@@ -67,6 +69,34 @@ const Feedback = z.object({
 let busyReason: string | null = null
 let quitConfirmed = false
 
+let splash: BrowserWindow | null = null
+
+/**
+ * Splash while the sidecar spawns and the renderer bundle parses. Frameless and
+ * non-interactive; it closes as soon as the real window is ready to show, so it
+ * can never outlive startup or trap the operator if the app fails to load.
+ */
+function showSplash(): void {
+  splash = new BrowserWindow({
+    width: 380,
+    height: 300,
+    frame: false,
+    resizable: false,
+    show: false,
+    center: true,
+    backgroundColor: '#111827',
+    skipTaskbar: true,
+    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true }
+  })
+  void splash.loadFile(join(__dirname, 'splash.html'))
+  splash.once('ready-to-show', () => splash?.show())
+}
+
+function closeSplash(): void {
+  if (splash && !splash.isDestroyed()) splash.close()
+  splash = null
+}
+
 function createWindow(): void {
   const window = new BrowserWindow({
     width: 1360,
@@ -86,7 +116,10 @@ function createWindow(): void {
     }
   })
 
-  window.once('ready-to-show', () => window.show())
+  window.once('ready-to-show', () => {
+    closeSplash()
+    window.show()
+  })
 
   // No remote content is ever loaded into any window (brief §3).
   window.webContents.setWindowOpenHandler(({ url }) => {
@@ -94,6 +127,7 @@ function createWindow(): void {
     return { action: 'deny' }
   })
   window.webContents.on('will-navigate', (event) => event.preventDefault())
+  window.webContents.on('did-fail-load', () => closeSplash())
 
   window.on('close', (event) => {
     if (quitConfirmed) return
@@ -457,11 +491,10 @@ function registerIpc(): void {
   })
 
   // --- updates ---
-  ipcMain.handle('updates:check', async () => {
-    if (isDev) return { status: 'dev' as const }
-    // electron-updater is configured per channel, but the feed is not published
-    // yet. Report honestly instead of showing a fake "up to date".
-    return { status: 'unconfigured' as const, channel: process.env['UPDATE_CHANNEL'] ?? 'modern' }
+  ipcMain.handle('updates:state', () => currentState())
+  ipcMain.handle('updates:check', async () => checkUpdates())
+  ipcMain.handle('updates:install', () => {
+    installNow()
   })
 
   ipcMain.handle('shell:showItem', (_event, raw: unknown) => {
@@ -476,8 +509,11 @@ function registerIpc(): void {
 
 app.whenReady().then(() => {
   registerIpc()
+  buildMenu()
+  showSplash()
   sidecar.start()
   createWindow()
+  initUpdater()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })

@@ -93,6 +93,15 @@ export interface SyncStatus {
   lastBundleAt: string | null
   stagingDir: string
 }
+export type UpdateState =
+  | { status: 'dev' }
+  | { status: 'checking' }
+  | { status: 'current'; version: string }
+  | { status: 'available'; version: string }
+  | { status: 'downloading'; version: string; percent: number }
+  | { status: 'ready'; version: string; notes?: string }
+  | { status: 'error'; detail: string }
+
 export interface SyncOutcome {
   status: 'uploaded' | 'staged' | 'skipped'
   reason?: string
@@ -242,7 +251,26 @@ const api = {
       ipcRenderer.invoke('feedback:send', { kind, message, email })
   },
   updates: {
-    check: (): Promise<{ status: string; channel?: string }> => ipcRenderer.invoke('updates:check')
+    state: (): Promise<UpdateState> => ipcRenderer.invoke('updates:state'),
+    check: (): Promise<UpdateState> => ipcRenderer.invoke('updates:check'),
+    install: (): Promise<void> => ipcRenderer.invoke('updates:install'),
+    onState: (callback: (state: UpdateState) => void): (() => void) => {
+      const handler = (_e: unknown, value: UpdateState): void => callback(value)
+      ipcRenderer.on('updates:state', handler)
+      return () => ipcRenderer.removeListener('updates:state', handler)
+    }
+  },
+  menu: {
+    onNavigate: (callback: (route: string) => void): (() => void) => {
+      const handler = (_e: unknown, route: string): void => callback(route)
+      ipcRenderer.on('menu:navigate', handler)
+      return () => ipcRenderer.removeListener('menu:navigate', handler)
+    },
+    onAction: (callback: (action: string) => void): (() => void) => {
+      const handler = (_e: unknown, action: string): void => callback(action)
+      ipcRenderer.on('menu:action', handler)
+      return () => ipcRenderer.removeListener('menu:action', handler)
+    }
   },
   shell: {
     showItem: (path: string): Promise<void> => ipcRenderer.invoke('shell:showItem', path),

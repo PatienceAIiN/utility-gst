@@ -305,3 +305,53 @@ export function ConsentBanner({
     </Dialog>
   )
 }
+
+const SHORTCUTS: [string, string][] = [
+  ['Ctrl + O', 'Import invoices'],
+  ['Ctrl + Shift + O', 'Open a spreadsheet'],
+  ['Ctrl + E', 'Export the register'],
+  ['Ctrl + S', 'Save the spreadsheet'],
+  ['Ctrl + 1 … 5', 'Jump to Invoices, History, Spreadsheets, Local network, Profile'],
+  ['Ctrl + ,', 'Settings'],
+  ['Ctrl + Shift + L', 'Switch light / dark'],
+  ['Ctrl + F', 'Find'],
+  ['Ctrl + / ', 'This list'],
+  ['Ctrl + + / −', 'Zoom in or out'],
+  ['F11', 'Full screen']
+]
+
+export function ShortcutsDialog({
+  open,
+  onClose
+}: {
+  open: boolean
+  onClose: () => void
+}): JSX.Element {
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
+      <DialogTitle>Keyboard shortcuts</DialogTitle>
+      <DialogContent dividers>
+        <Stack spacing={1.1}>
+          {SHORTCUTS.map(([keys, what]) => (
+            <Stack key={keys} direction="row" spacing={2} alignItems="baseline">
+              <Typography
+                variant="body2"
+                sx={{ minWidth: 148, fontFamily: 'monospace', fontWeight: 600 }}
+              >
+                {keys}
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                {what}
+              </Typography>
+            </Stack>
+          ))}
+        </Stack>
+      </DialogContent>
+      <DialogActions sx={{ px: 3, pb: 2 }}>
+        <Button variant="contained" onClick={onClose}>
+          Close
+        </Button>
+      </DialogActions>
+    </Dialog>
+  )
+}

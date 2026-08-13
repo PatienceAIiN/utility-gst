@@ -151,7 +151,7 @@ export function SettingsScreen({
   onPatch: (patch: Partial<Pick<SettingsShape, 'theme' | 'confirmOnExit'>>) => void
   onConsent: (analytics: boolean, cloudSync: boolean) => void
 }): JSX.Element {
-  const [update, setUpdate] = useState<{ status: string; channel?: string } | null>(null)
+  const [update, setUpdate] = useState<import('../../preload/index').UpdateState | null>(null)
   const [checking, setChecking] = useState(false)
   const [paths, setPaths] = useState<PathsInfo | null>(null)
   const [licencesOpen, setLicencesOpen] = useState(false)
@@ -271,8 +271,7 @@ export function SettingsScreen({
 
           {consent?.cloudSync && (
             <Alert severity="info" sx={{ mt: 2 }}>
-              Backup is enabled but the account server is not connected yet, so nothing is being
-              uploaded. You will be asked to sign in before the first backup runs.
+              Backups run once you are signed in. Manage them on the Profile page.
             </Alert>
           )}
           {consent && (
@@ -326,9 +325,37 @@ export function SettingsScreen({
               Running from a development build — updates do not apply.
             </Alert>
           )}
-          {update?.status === 'unconfigured' && (
+          {update?.status === 'current' && (
+            <Alert severity="success" sx={{ mt: 2 }}>
+              You are on the latest version.
+            </Alert>
+          )}
+          {update?.status === 'available' && (
+            <Alert severity="info" sx={{ mt: 2 }}>
+              Version {update.version} is downloading in the background.
+            </Alert>
+          )}
+          {update?.status === 'downloading' && (
+            <Alert severity="info" sx={{ mt: 2 }}>
+              Downloading {update.version} — {update.percent}%
+            </Alert>
+          )}
+          {update?.status === 'ready' && (
+            <Alert
+              severity="success"
+              sx={{ mt: 2 }}
+              action={
+                <Button size="small" onClick={() => void window.api.updates.install()}>
+                  Restart now
+                </Button>
+              }
+            >
+              Version {update.version} is ready and will install when you close the app.
+            </Alert>
+          )}
+          {update?.status === 'error' && (
             <Alert severity="warning" sx={{ mt: 2 }}>
-              The update service is not connected yet, so this build cannot check for new versions.
+              Could not check for updates: {update.detail}
             </Alert>
           )}
           <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 2 }}>

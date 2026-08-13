@@ -15,7 +15,14 @@ import DarkModeIcon from '@mui/icons-material/DarkMode'
 import LightModeIcon from '@mui/icons-material/LightMode'
 import type { AppInfo, Settings as SettingsShape } from '../preload/index'
 import { buildTheme } from './theme'
-import { Brand, ConfirmDialog, ConsentBanner, FeedbackDialog, type ConfirmSpec } from './ui'
+import {
+  Brand,
+  ConfirmDialog,
+  ConsentBanner,
+  FeedbackDialog,
+  ShortcutsDialog,
+  type ConfirmSpec
+} from './ui'
 import Invoices from './screens/Invoices'
 import History from './screens/History'
 import Sheets from './screens/Sheets'
@@ -41,6 +48,7 @@ export default function App(): JSX.Element {
   const [settings, setSettings] = useState<SettingsShape | null>(null)
   const [confirmSpec, setConfirmSpec] = useState<ConfirmSpec | null>(null)
   const [feedbackOpen, setFeedbackOpen] = useState(false)
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
 
   const prefersDark = useMediaQuery('(prefers-color-scheme: dark)')
   const mode: 'light' | 'dark' =
@@ -53,6 +61,30 @@ export default function App(): JSX.Element {
   }, [])
 
   const confirm = useCallback((spec: ConfirmSpec) => setConfirmSpec(spec), [])
+
+  // Menu intents. The menu never acts directly; it asks the renderer, which
+  // owns screen state.
+  useEffect(() => {
+    const offNav = window.api.menu.onNavigate((route) => setRoute(route as Route))
+    const offAction = window.api.menu.onAction((action) => {
+      if (action === 'feedback') setFeedbackOpen(true)
+      else if (action === 'shortcuts') setShortcutsOpen(true)
+      else if (action === 'toggle-theme') {
+        void window.api.settings.get().then((s) => {
+          const next = s.theme === 'dark' ? 'light' : 'dark'
+          void window.api.settings.patch({ theme: next }).then(setSettings)
+        })
+      } else if (action === 'reveal-output') void window.api.paths.reveal()
+      else if (action === 'import') setRoute('invoices')
+      else if (action === 'export') setRoute('invoices')
+      else if (action === 'open-sheet' || action === 'save-sheet') setRoute('sheets')
+      else if (action === 'licences') setRoute('settings')
+    })
+    return () => {
+      offNav()
+      offAction()
+    }
+  }, [])
 
   const patchSettings = useCallback(
     (patch: Partial<Pick<SettingsShape, 'theme' | 'confirmOnExit'>>) => {
@@ -181,6 +213,7 @@ export default function App(): JSX.Element {
 
       <ConfirmDialog spec={confirmSpec} onClose={() => setConfirmSpec(null)} />
       <FeedbackDialog open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
+      <ShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
       <ConsentBanner open={settings?.needsConsent === true} onDecide={setConsent} />
     </ThemeProvider>
   )

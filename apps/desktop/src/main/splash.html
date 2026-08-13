@@ -1,0 +1,41 @@
+<!doctype html>
+<meta charset="utf-8" />
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#111827;
+    font-family:"Segoe UI Variable","Segoe UI",Inter,system-ui,sans-serif;color:#e6edf6}
+  .wrap{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;
+    -webkit-app-region:drag;animation:in .35s ease}
+  @keyframes in{from{opacity:0}to{opacity:1}}
+  .mark{width:88px;height:88px;border-radius:22px;background:#0d1117;display:grid;place-items:center;
+    box-shadow:0 12px 40px rgba(0,0,0,.45);animation:rise .6s cubic-bezier(.2,.7,.3,1)}
+  @keyframes rise{from{transform:translateY(8px) scale(.96);opacity:0}to{transform:none;opacity:1}}
+  .sheet{width:46px;height:50px;border-radius:6px;background:#f0f6fc;position:relative}
+  .sheet i{position:absolute;left:7px;height:4px;border-radius:2px;background:#7aa2f7}
+  .sheet i:nth-child(1){top:13px;width:24px}
+  .sheet i:nth-child(2){top:22px;width:24px}
+  .sheet i:nth-child(3){top:31px;width:24px}
+  .tick{position:absolute;right:-9px;bottom:-4px;width:26px;height:26px}
+  h1{margin:0;font-size:19px;font-weight:650;letter-spacing:-.02em}
+  p{margin:0;font-size:12.5px;color:#8b98ab}
+  .bar{width:184px;height:3px;border-radius:2px;background:rgba(255,255,255,.10);overflow:hidden}
+  .bar span{display:block;height:100%;width:40%;border-radius:2px;background:#7aa2f7;
+    animation:slide 1.15s ease-in-out infinite}
+  @keyframes slide{0%{transform:translateX(-105%)}100%{transform:translateX(260%)}}
+  footer{position:absolute;bottom:16px;font-size:11px;color:#69768a}
+</style>
+<div class="wrap">
+  <div class="mark">
+    <div class="sheet"><i></i><i></i><i></i>
+      <svg class="tick" viewBox="0 0 24 24" fill="none">
+        <path d="M3 13l5 5L21 5" stroke="#34c77b" stroke-width="4"
+              stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </div>
+  </div>
+  <div style="text-align:center">
+    <h1>Utility</h1>
+    <p>GST Sales Register</p>
+  </div>
+  <div class="bar"><span></span></div>
+  <footer>A product of Patience AI</footer>
+</div>

@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Utility — GST Sales Register by Patience AI</title>
+<meta name="description" content="Turn invoices into a GST sales register that ties out to the rupee. Works offline on your own computer." />
+<!-- Cache-busting is handled by the deploy script stamping ?v= on assets. -->
+<style>
+  :root{
+    --bg:#0b1017; --panel:#121a24; --line:rgba(255,255,255,.09);
+    --ink:#e8eef8; --muted:#93a1b5; --brand:#7aa2f7; --ok:#34c77b;
+  }
+  @media (prefers-color-scheme: light){
+    :root{--bg:#f6f8fc;--panel:#fff;--line:rgba(16,24,40,.10);--ink:#0e1726;--muted:#5b6779;--brand:#0b57d0}
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:"Segoe UI Variable","Segoe UI",Inter,Roboto,system-ui,sans-serif;line-height:1.6}
+  a{color:var(--brand)}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 22px}
+  header{position:sticky;top:0;backdrop-filter:blur(12px);
+    background:color-mix(in srgb,var(--bg) 82%,transparent);border-bottom:1px solid var(--line);z-index:10}
+  .nav{display:flex;align-items:center;gap:14px;padding:14px 0}
+  .logo{display:flex;align-items:center;gap:10px;font-weight:680;letter-spacing:-.02em}
+  .mark{width:32px;height:32px;border-radius:9px;background:#0d1117;display:grid;place-items:center;flex:0 0 auto}
+  .mark i{display:block;width:17px;height:19px;border-radius:3px;background:#f0f6fc}
+  .spacer{flex:1}
+  .btn{display:inline-block;border:0;border-radius:10px;padding:11px 18px;font:inherit;font-weight:620;
+    cursor:pointer;text-decoration:none;transition:transform .14s ease,opacity .18s ease}
+  .btn:active{transform:scale(.985)}
+  .btn-primary{background:var(--brand);color:#04101f}
+  .btn-ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}
+  h1{font-size:clamp(30px,5vw,50px);line-height:1.1;letter-spacing:-.03em;margin:0 0 16px}
+  h2{font-size:clamp(21px,3vw,29px);letter-spacing:-.02em;margin:0 0 12px}
+  .lede{font-size:clamp(15px,2vw,18px);color:var(--muted);max-width:62ch;margin:0 0 26px}
+  section{padding:76px 0;border-bottom:1px solid var(--line)}
+  .hero{padding:86px 0 70px;border-bottom:1px solid var(--line)}
+  .row{display:grid;gap:18px;grid-template-columns:repeat(auto-fit,minmax(250px,1fr))}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:22px}
+  .card h3{margin:0 0 8px;font-size:16px}
+  .card p{margin:0;color:var(--muted);font-size:14.5px}
+  .pill{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:999px;
+    padding:6px 13px;font-size:12.5px;color:var(--muted);margin-bottom:20px}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--ok)}
+  form{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:24px;max-width:440px}
+  label{display:block;font-size:13px;font-weight:600;margin:14px 0 6px}
+  input{width:100%;padding:11px 13px;border-radius:10px;border:1px solid var(--line);
+    background:var(--bg);color:var(--ink);font:inherit}
+  input:focus{outline:2px solid var(--brand);outline-offset:1px}
+  .msg{margin-top:14px;padding:11px 13px;border-radius:10px;font-size:14px;display:none}
+  .msg.ok{display:block;background:color-mix(in srgb,var(--ok) 16%,transparent);color:var(--ok)}
+  .msg.err{display:block;background:rgba(255,120,110,.14);color:#ff9a90}
+  .tabs{display:flex;gap:6px;margin-bottom:6px}
+  .tab{flex:1;padding:9px;border-radius:9px;border:1px solid var(--line);background:transparent;
+    color:var(--muted);font:inherit;font-weight:600;cursor:pointer}
+  .tab[aria-selected=true]{background:var(--brand);color:#04101f;border-color:transparent}
+  footer{padding:34px 0;color:var(--muted);font-size:13.5px}
+  .fine{color:var(--muted);font-size:12.5px;margin-top:12px}
+
+  h3.sub{margin:34px 0 10px;font-size:17px;letter-spacing:-.01em}
+  .steps{color:var(--muted);padding-left:20px;max-width:70ch}
+  .steps li{margin-bottom:9px}
+  .steps strong{color:var(--ink)}
+  code{background:color-mix(in srgb,var(--ink) 10%,transparent);padding:1px 6px;border-radius:5px;font-size:13px}
+  .tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:14px;margin:14px 0}
+  table{border-collapse:collapse;width:100%;min-width:520px;font-size:14.5px}
+  th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line)}
+  th{font-weight:650;background:color-mix(in srgb,var(--ink) 5%,transparent)}
+  tr:last-child td{border-bottom:0}
+  td:first-child{font-weight:600;white-space:nowrap}
+  section p{color:var(--muted);max-width:74ch}
+  footer{border-top:1px solid var(--line);padding:44px 0 26px;color:var(--muted);font-size:14px}
+  .fgrid{display:grid;gap:30px;grid-template-columns:1.4fr repeat(4,1fr);align-items:start}
+  @media (max-width:860px){.fgrid{grid-template-columns:1fr 1fr}}
+  @media (max-width:520px){.fgrid{grid-template-columns:1fr}}
+  footer h4{margin:0 0 12px;font-size:13px;font-weight:650;color:var(--ink);letter-spacing:.01em}
+  footer nav{display:flex;flex-direction:column;gap:9px}
+  footer nav a{color:var(--muted);text-decoration:none}
+  footer nav a:hover{color:var(--brand)}
+  .fbar{display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;
+    margin-top:34px;padding-top:20px;border-top:1px solid var(--line);font-size:13px}
+  .reveal{opacity:0;transform:translateY(10px);transition:opacity .5s ease,transform .5s ease}
+  .reveal.in{opacity:1;transform:none}
+  @media (prefers-reduced-motion: reduce){.reveal{opacity:1;transform:none;transition:none}}
+</style>
+</head>
+<body>
+<header><div class="wrap nav">
+  <span class="logo"><span class="mark"><i></i></span>Utility</span>
+  <span class="spacer"></span>
+  <a class="btn btn-ghost" href="#docs">Docs</a>
+  <a class="btn btn-ghost" href="#account">Sign in</a>
+  <a class="btn btn-primary" href="#download">Download</a>
+</div></header>
+
+<div class="wrap hero">
+  <span class="pill"><span class="dot"></span>Works offline · your data stays on your computer</span>
+  <h1>Invoices in.<br />A sales register that ties out.</h1>
+  <p class="lede">
+    Utility reads the invoices you already have, checks the arithmetic on every line, and produces a
+    consolidated GST sales register. Anything that does not reconcile is held back for review
+    instead of being written out quietly.
+  </p>
+  <a class="btn btn-primary" href="#download">Download for Windows</a>
+  <a class="btn btn-ghost" href="#account">Create an account</a>
+</div>
+
+<section class="wrap reveal">
+  <h2>Built for people who have to tie out</h2>
+  <div class="row" style="margin-top:26px">
+    <div class="card"><h3>Every line is checked</h3>
+      <p>Quantities, rates, tax splits and invoice totals are verified against each other. A mismatch stops the export rather than reaching your Excel.</p></div>
+    <div class="card"><h3>Nothing is uploaded</h3>
+      <p>Invoices are read and processed on your own computer. Cloud backup is optional, off by default, and encrypted before it leaves.</p></div>
+    <div class="card"><h3>Your template, fixed</h3>
+      <p>Output matches the register format you already use, with the totals covering the full data range however many invoices you add.</p></div>
+    <div class="card"><h3>Reconciliation built in</h3>
+      <p>A summary sheet shows each invoice against what the register computed, so a difference is visible immediately instead of at year end.</p></div>
+    <div class="card"><h3>Works on your network</h3>
+      <p>Share registers with other computers in the office, with permissions you grant per device and can withdraw at any time.</p></div>
+    <div class="card"><h3>Stays current</h3>
+      <p>Updates download quietly and apply when you close the app, never in the middle of your work.</p></div>
+  </div>
+</section>
+
+<section class="wrap reveal" id="download">
+  <h2>Download</h2>
+  <p class="lede">Windows 10 and 11. A separate build is available for Windows 7 and 8.</p>
+  <div class="row">
+    <div class="card">
+      <h3>Windows 10 / 11</h3>
+      <p style="margin-bottom:14px">Recommended for most computers.</p>
+      <a class="btn btn-primary" id="dl-modern" href="https://github.com/PatienceAIiN/utility-gst/releases/latest">Download</a>
+    </div>
+    <div class="card">
+      <h3>Windows 7 / 8 / 8.1</h3>
+      <p style="margin-bottom:14px">For older machines still in service.</p>
+      <a class="btn btn-ghost" id="dl-legacy" href="https://github.com/PatienceAIiN/utility-gst/releases/latest">Download</a>
+    </div>
+  </div>
+  <p class="fine">
+    Windows may warn that the publisher is unrecognised while our certificate is being issued. If it
+    does, choose <strong>More info → Run anyway</strong>.
+  </p>
+</section>
+
+<section class="wrap reveal" id="account">
+  <h2>Your account</h2>
+  <p class="lede">
+    An account is only needed for cloud backup and restoring on another computer. Utility works
+    fully without one.
+  </p>
+  <form id="form" autocomplete="on">
+    <div class="tabs" role="tablist">
+      <button type="button" class="tab" role="tab" aria-selected="true"  data-mode="signin">Sign in</button>
+      <button type="button" class="tab" role="tab" aria-selected="false" data-mode="signup">Create account</button>
+    </div>
+    <div id="name-row" hidden>
+      <label for="name">Your name</label>
+      <input id="name" name="name" autocomplete="name" />
+    </div>
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email" autocomplete="email" required />
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required />
+    <p class="fine" id="pw-hint" hidden>At least 10 characters.</p>
+    <div style="margin-top:18px"><button class="btn btn-primary" id="submit" type="submit">Sign in</button></div>
+    <div class="msg" id="msg" role="status" aria-live="polite"></div>
+  </form>
+</section>
+
+
+<section class="wrap reveal" id="docs">
+  <h2>Documentation</h2>
+  <p class="lede">Everything you need to go from a folder of invoices to a finished register.</p>
+
+  <h3 class="sub">Getting started</h3>
+  <ol class="steps">
+    <li><strong>Install and open Utility.</strong> On first run you are asked about diagnostics and cloud backup. Both are off unless you switch them on.</li>
+    <li><strong>Go to Invoices and choose Import.</strong> Select one or many invoice files at once.</li>
+    <li><strong>Check what was read.</strong> Each invoice shows its lines, its totals, and whether it ties out to the total printed on the invoice.</li>
+    <li><strong>Resolve anything flagged.</strong> Warnings are advisory. A blocking failure keeps the export disabled until it is dealt with.</li>
+    <li><strong>Choose Export register.</strong> The file is written to your Utility folder, organised by month.</li>
+  </ol>
+
+  <h3 class="sub">Files you can import</h3>
+  <div class="row">
+    <div class="card"><h3>Invoices</h3><p>PDF invoices with a text layer. Scanned images and further formats are being added.</p></div>
+    <div class="card"><h3>Spreadsheets</h3><p>Excel <code>.xlsx</code>, <code>.xlsm</code> and <code>.csv</code> can be opened and edited inside the app, with formulas.</p></div>
+    <div class="card"><h3>Output</h3><p>A single <code>.xlsx</code> register with three sheets. Existing exports are never overwritten.</p></div>
+  </div>
+
+  <h3 class="sub">The register format</h3>
+  <p>The <strong>Sales Data</strong> sheet is produced in the standard register layout, one row per line item, with the invoice details repeated on every row:</p>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Column</th><th>Contents</th></tr></thead>
+    <tbody>
+      <tr><td>Invoice No</td><td>As printed on the invoice</td></tr>
+      <tr><td>Date</td><td>A real date, formatted <code>dd-mm-yyyy</code></td></tr>
+      <tr><td>Party Name / GST No</td><td>The buyer’s details</td></tr>
+      <tr><td>Product Description</td><td>The line item</td></tr>
+      <tr><td>HSN Code</td><td>Written as text, so leading zeros are preserved</td></tr>
+      <tr><td>QTY / Unit</td><td>Quantity may be fractional. Unit is left blank rather than guessed</td></tr>
+      <tr><td>Taxable</td><td>The taxable value for the line</td></tr>
+      <tr><td>IGST / CGST / SGST</td><td>Rate and amount. Only one of IGST or CGST+SGST applies</td></tr>
+      <tr><td>TOTAL</td><td>A live formula, so it recalculates if you edit a row</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>Two further sheets are included. <strong>Invoice Summary</strong> lists each invoice with its totals, round-off and the difference against the printed invoice total — this is the sheet to reconcile against. <strong>Import Log</strong> records which file produced which rows, and when.</p>
+
+  <h3 class="sub">Review and warnings</h3>
+  <p>Utility distinguishes two kinds of finding. A <strong>warning</strong> is information — for example, a unit that the invoice never stated. A <strong>blocking failure</strong> means something does not add up, and the export stays disabled until it is resolved. This is deliberate: a loud failure is always better than a quiet mismatch in a register.</p>
+  <p>Lines with a quantity of zero are not carried into the register. Vendors often leave unordered items in the table, and those are not sales.</p>
+
+  <h3 class="sub">Where files are saved</h3>
+  <p>By default everything goes to <code>Downloads\Utility by Patience AI</code>, with registers filed by month and edited spreadsheets kept separately. You can change the location in Settings. Exports are timestamped, so an earlier register is never overwritten.</p>
+
+  <h3 class="sub">Sharing on your office network</h3>
+  <p>Turn on <strong>Local network</strong> to find other computers running Utility. Connecting requires a six-digit code shown on one machine and typed on the other. Connecting on its own grants nothing — you then choose whether that device may see the list, open records, or send records to you, and you can withdraw any of it later.</p>
+
+  <h3 class="sub">Backup and a second computer</h3>
+  <p>Cloud backup is off unless you enable it. When on, your register data is compressed and encrypted on your own machine before it is uploaded, using a key derived from your password. Your password is never sent and the backup cannot be read without it. Signing in on another computer lets you restore that data there.</p>
+
+  <h3 class="sub">Updates</h3>
+  <p>Updates download quietly in the background and install when you close the app, so an import in progress is never interrupted.</p>
+
+  <h3 class="sub">If Windows warns you</h3>
+  <p>While our code-signing certificate is being issued, Windows may report an unrecognised publisher, or Smart App Control may block the installer. Choose <strong>More info → Run anyway</strong>. If Smart App Control blocks it outright, it can be turned off under Windows Security → App &amp; browser control. This warning is about the certificate, not about the application.</p>
+</section>
+
+<section class="wrap reveal" id="terms">
+  <h2>Terms of use</h2>
+  <p class="lede">Plain summary, effective on installation.</p>
+  <div class="row">
+    <div class="card"><h3>Your data is yours</h3><p>Patience AI claims no ownership of invoices, registers or any data you process. We do not access it.</p></div>
+    <div class="card"><h3>Check the output</h3><p>Utility is a tool to assist preparation of records. Responsibility for the accuracy of filings and returns remains with you and your accountant.</p></div>
+    <div class="card"><h3>Licence</h3><p>You are granted a non-exclusive licence to use the application within your organisation. It may not be resold or redistributed.</p></div>
+    <div class="card"><h3>Availability</h3><p>The application runs offline and keeps working without our servers. Optional online features may change or be interrupted.</p></div>
+  </div>
+</section>
+
+<section class="wrap reveal" id="privacy">
+  <h2>Privacy</h2>
+  <p class="lede">What is collected, and what is not. In line with the Digital Personal Data Protection Act, 2023.</p>
+  <div class="row">
+    <div class="card"><h3>Invoices never leave your computer</h3><p>Files are read and processed locally. No invoice is uploaded to us at any time, with or without an account.</p></div>
+    <div class="card"><h3>Account details</h3><p>If you create an account we store your name, email and organisation. Passwords are stored only as an irreversible hash.</p></div>
+    <div class="card"><h3>Backups are encrypted first</h3><p>If you enable cloud backup, data is encrypted on your machine before upload. We hold only an unreadable file.</p></div>
+    <div class="card"><h3>Diagnostics are optional</h3><p>Off unless you turn them on, and limited to error codes. Never amounts, GSTINs or party names.</p></div>
+    <div class="card"><h3>Your rights</h3><p>You may withdraw consent, request a copy of your account data, or ask for deletion, by writing to us.</p></div>
+    <div class="card"><h3>Contact</h3><p>Questions about data handling: <a href="mailto:support@patienceai.in">support@patienceai.in</a></p></div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="fgrid">
+      <div>
+        <span class="logo"><span class="mark"><i></i></span>Utility</span>
+        <p class="fine" style="margin-top:10px;max-width:34ch">
+          Invoice digitisation for Indian GST accounting. Offline first.
+        </p>
+      </div>
+      <nav>
+        <h4>Product</h4>
+        <a href="#download">Download</a>
+        <a href="#account">Create account</a>
+        <a href="#account">Sign in</a>
+      </nav>
+      <nav>
+        <h4>Documentation</h4>
+        <a href="#docs">Getting started</a>
+        <a href="#docs">Register format</a>
+        <a href="#docs">Troubleshooting</a>
+      </nav>
+      <nav>
+        <h4>Legal</h4>
+        <a href="#terms">Terms of use</a>
+        <a href="#privacy">Privacy</a>
+        <a href="#privacy">Data protection</a>
+      </nav>
+      <nav>
+        <h4>Contact</h4>
+        <a href="mailto:support@patienceai.in">support@patienceai.in</a>
+        <a href="https://patienceai.in">patienceai.in</a>
+      </nav>
+    </div>
+    <div class="fbar">
+      <span>A product of <a href="https://patienceai.in">Patience AI</a></span>
+      <span id="build"></span>
+    </div>
+  </div>
+</footer>
+
+<script>
+(function () {
+  'use strict';
+  // Same-origin: the page is served from the same host as the API, so no
+  // endpoint is embedded and nothing has to be configured per deployment.
+  var API = '/utility-api';
+  var mode = 'signin';
+  var form = document.getElementById('form');
+  var msg = document.getElementById('msg');
+  var submit = document.getElementById('submit');
+  var pwHint = document.getElementById('pw-hint');
+  var nameRow = document.getElementById('name-row');
+
+  function show(kind, text) { msg.className = 'msg ' + kind; msg.textContent = text; }
+
+  Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (tab) {
+    tab.addEventListener('click', function () {
+      mode = tab.getAttribute('data-mode');
+      Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (other) {
+        other.setAttribute('aria-selected', String(other === tab));
+      });
+      var isSignUp = mode === 'signup';
+      nameRow.hidden = !isSignUp;
+      pwHint.hidden = !isSignUp;
+      document.getElementById('name').required = isSignUp;
+      document.getElementById('password').setAttribute(
+        'autocomplete', isSignUp ? 'new-password' : 'current-password');
+      submit.textContent = isSignUp ? 'Create account' : 'Sign in';
+      msg.className = 'msg';
+    });
+  });
+
+  form.addEventListener('submit', function (event) {
+    event.preventDefault();
+    var body = {
+      email: document.getElementById('email').value.trim(),
+      password: document.getElementById('password').value
+    };
+    if (mode === 'signup') body.name = document.getElementById('name').value.trim();
+    if (mode === 'signup' && body.password.length < 10) {
+      return show('err', 'Use a password of at least 10 characters.');
+    }
+    submit.disabled = true;
+    show('ok', 'Working…');
+    fetch(API + '/v1/auth/' + (mode === 'signup' ? 'signup' : 'login'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body)
+    }).then(function (response) {
+      return response.json().then(function (data) { return { ok: response.ok, data: data }; });
+    }).then(function (result) {
+      if (!result.ok) throw new Error(result.data.error || 'That did not work.');
+      show('ok', mode === 'signup'
+        ? 'Account created. Download Utility and sign in with the same details.'
+        : 'Signed in. Open Utility on your computer to use cloud backup.');
+      form.reset();
+    }).catch(function (error) {
+      show('err', error.message || 'Could not reach the server.');
+    }).finally(function () { submit.disabled = false; });
+  });
+
+  // Resolve the real installer URLs from the latest release so the buttons never
+  // point at a stale version.
+  fetch('https://api.github.com/repos/PatienceAIiN/utility-gst/releases/latest')
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (release) {
+      if (!release || !release.assets) return;
+      release.assets.forEach(function (asset) {
+        var legacy = asset.name.indexOf('legacy') !== -1;
+        var el = document.getElementById(legacy ? 'dl-legacy' : 'dl-modern');
+        if (el && /\.exe$/.test(asset.name)) el.href = asset.browser_download_url;
+      });
+      document.getElementById('build').textContent = 'Latest version ' + release.tag_name;
+    })
+    .catch(function () { /* buttons already point at the releases page */ });
+
+  // Reveal on scroll, and immediately for anything already in view.
+  var io = new IntersectionObserver(function (entries) {
+    entries.forEach(function (entry) {
+      if (entry.isIntersecting) { entry.target.classList.add('in'); io.unobserve(entry.target); }
+    });
+  }, { rootMargin: '-40px' });
+  Array.prototype.forEach.call(document.querySelectorAll('.reveal'), function (el) { io.observe(el); });
+})();
+</script>
+</body>
+</html>
