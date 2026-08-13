@@ -94,11 +94,22 @@ export default function Invoices({
 
   // File menu drives import and export; this screen shows the result.
   useEffect(() => {
-    const off = window.api.menu.onAction((action) => {
+    const fromMenu = window.api.menu.onAction((action) => {
       if (action === 'import') void pickAndParse()
       else if (action === 'export') void runExport()
     })
-    return off
+    // The bar buttons raise the same intents, so there is one code path whether
+    // the operator uses the menu or the button.
+    const fromBar = (event: Event): void => {
+      const detail = (event as CustomEvent<string>).detail
+      if (detail === 'import') void pickAndParse()
+      else if (detail === 'export') void runExport()
+    }
+    window.addEventListener('utility:action', fromBar)
+    return () => {
+      fromMenu()
+      window.removeEventListener('utility:action', fromBar)
+    }
   })
 
   return (

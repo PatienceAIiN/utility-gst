@@ -31,11 +31,20 @@ const LICENCES = [
   { name: 'cryptography', licence: 'Apache-2.0 / BSD-3-Clause', what: 'Encrypted document support' }
 ]
 
-export function About({ info }: { info: AppInfo }): JSX.Element {
+export function AboutDialog({
+  open,
+  info,
+  onClose
+}: {
+  open: boolean
+  info: AppInfo
+  onClose: () => void
+}): JSX.Element {
   return (
-    <Box>
-      <Section title="About Utility" subtitle="GST invoice digitisation, built to tie out to the rupee.">
-        <Paper variant="outlined" sx={{ p: 3 }}>
+    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth scroll="paper">
+      <DialogTitle>About Utility</DialogTitle>
+      <DialogContent dividers>
+        <Box>
           <Typography variant="subtitle2" gutterBottom>
             Why it exists
           </Typography>
@@ -97,10 +106,14 @@ export function About({ info }: { info: AppInfo }): JSX.Element {
               .
             </Typography>
           </Box>
-        </Paper>
-      </Section>
-
-    </Box>
+        </Box>
+      </DialogContent>
+      <DialogActions sx={{ px: 3, pb: 2 }}>
+        <Button variant="contained" onClick={onClose}>
+          Close
+        </Button>
+      </DialogActions>
+    </Dialog>
   )
 }
 
@@ -350,7 +363,6 @@ export function SettingsScreen({
           </Typography>
         </Paper>
       </Section>
-
     </Box>
   )
 }

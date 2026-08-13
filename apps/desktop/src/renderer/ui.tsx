@@ -313,7 +313,7 @@ const SHORTCUTS: [string, string][] = [
   ['Ctrl + Shift + O', 'Open a spreadsheet'],
   ['Ctrl + E', 'Export the register'],
   ['Ctrl + S', 'Save the spreadsheet'],
-  ['Ctrl + 1 … 5', 'Jump to Invoices, History, Spreadsheets, Local network, Profile'],
+  ['Ctrl + 1 … 7', 'Dashboard, Invoices, History, Spreadsheets, Local network, Profile, Settings'],
   ['Ctrl + ,', 'Settings'],
   ['Ctrl + Shift + L', 'Switch light / dark'],
   ['Ctrl + F', 'Find'],

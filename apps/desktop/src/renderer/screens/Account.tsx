@@ -84,7 +84,7 @@ export default function Account({
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [recovery, setRecovery] = useState<string | null>(null)
-  const [otpSent, setOtpSent] = useState(false)
+  const [forgotOpen, setForgotOpen] = useState(false)
 
   const [form, setForm] = useState({ email: '', password: '', name: '', org: '', gstin: '', code: '' })
   const [profile, setProfile] = useState({ name: '', org: '', gstin: '' })
@@ -124,18 +124,13 @@ export default function Account({
   if (status && !status.signedIn) {
     const hasAccount = status.hasAccount
     // With no account yet there is nothing to sign in to, so only offer sign-up.
-    const mode: 'signin' | 'signup' | 'reset' =
-      !hasAccount ? 'signup' : tab === 0 ? 'signin' : 'reset'
+    const mode: 'signin' | 'signup' = !hasAccount ? 'signup' : tab === 0 ? 'signin' : 'signup'
 
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', pt: 2 }}>
         <Box sx={{ maxWidth: 480, width: '100%' }}>
           <Typography variant="h6" align="center" sx={{ mb: 0.5 }}>
-            {mode === 'signup'
-              ? 'Create your account'
-              : mode === 'reset'
-                ? 'Reset password'
-                : 'Sign in'}
+            {mode === 'signup' ? 'Create your account' : 'Sign in'}
           </Typography>
           <Typography variant="body2" color="text.secondary" align="center" sx={{ mb: 3 }}>
             Your account is stored on this computer. Nothing is uploaded unless you turn on cloud
@@ -149,13 +144,12 @@ export default function Account({
                 onChange={(_e, v: number) => {
                   setTab(v)
                   setError(null)
-                  setOtpSent(false)
                 }}
                 sx={{ mb: 2 }}
                 variant="fullWidth"
               >
                 <Tab label="Sign in" />
-                <Tab label="Forgot password" />
+                <Tab label="Create account" />
               </Tabs>
             )}
             <Busy show={busy !== null} label={busy ?? undefined} />
@@ -188,41 +182,6 @@ export default function Account({
                 onChange={(e) => setForm({ ...form, email: e.target.value })}
               />
 
-              {mode === 'reset' && (
-                <>
-                  <Button
-                    variant="outlined"
-                    disabled={!form.email || busy !== null}
-                    onClick={async () => {
-                      setBusy('Sending code…')
-                      setError(null)
-                      try {
-                        const result = await window.api.auth.otpRequest(form.email)
-                        if (result.ok) {
-                          setOtpSent(true)
-                          setNotice(
-                            'If that address has an account, a code is on its way. It expires in 15 minutes.'
-                          )
-                        } else setError(result.error ?? 'Could not send the code.')
-                      } finally {
-                        setBusy(null)
-                      }
-                    }}
-                  >
-                    {otpSent ? 'Send another code' : 'Email me a code'}
-                  </Button>
-                  <TextField
-                    size="small"
-                    label="6-digit code"
-                    value={form.code}
-                    onChange={(e) =>
-                      setForm({ ...form, code: e.target.value.replace(/\D/g, '').slice(0, 6) })
-                    }
-                    inputProps={{ style: { fontFamily: 'monospace', letterSpacing: 5 } }}
-                  />
-                </>
-              )}
-
               <Secret
                 label={mode === 'signin' ? 'Password' : 'New password'}
                 value={form.password}
@@ -248,22 +207,10 @@ export default function Account({
                 </>
               )}
 
-              {mode === 'reset' && (
-                <Alert severity="warning">
-                  Changing your password makes existing cloud backups unreadable — they are
-                  encrypted with a key derived from the old one. Back up again afterwards.
-                </Alert>
-              )}
-
               <Button
                 variant="contained"
                 size="large"
-                disabled={
-                  busy !== null ||
-                  !form.email ||
-                  !form.password ||
-                  (mode === 'reset' && form.code.length < 4)
-                }
+                disabled={busy !== null || !form.email || !form.password}
                 onClick={async () => {
                   setBusy('Working…')
                   try {
@@ -278,11 +225,6 @@ export default function Account({
                         }),
                         'Account created.'
                       )
-                    } else if (mode === 'reset') {
-                      handle(
-                        await window.api.auth.otpReset(form.email, form.code, form.password),
-                        'Password changed.'
-                      )
                     } else {
                       handle(await window.api.auth.signIn(form.email, form.password), 'Signed in.')
                     }
@@ -291,17 +233,30 @@ export default function Account({
                   }
                 }}
               >
-                {mode === 'signup'
-                  ? 'Create account'
-                  : mode === 'reset'
-                    ? 'Change password'
-                    : 'Sign in'}
+                {mode === 'signup' ? 'Create account' : 'Sign in'}
               </Button>
+
+              {mode === 'signin' && (
+                <Button size="small" onClick={() => setForgotOpen(true)}>
+                  Forgot password?
+                </Button>
+              )}
             </Stack>
           </Paper>
         </Box>
 
         <RecoveryDialog code={recovery} onClose={() => setRecovery(null)} />
+        <ForgotPasswordDialog
+          open={forgotOpen}
+          initialEmail={form.email}
+          onClose={() => setForgotOpen(false)}
+          onDone={(message, code) => {
+            setForgotOpen(false)
+            setNotice(message)
+            if (code) setRecovery(code)
+            void refresh()
+          }}
+        />
       </Box>
     )
   }
@@ -536,6 +491,142 @@ function RecoveryDialog({
       <DialogActions sx={{ px: 3, pb: 2 }}>
         <Button variant="contained" onClick={onClose}>
           I have written it down
+        </Button>
+      </DialogActions>
+    </Dialog>
+  )
+}
+
+/**
+ * Password reset by emailed code. A recovery path rather than a peer of sign-in
+ * and sign-up, so it lives in its own dialog instead of a third tab.
+ */
+function ForgotPasswordDialog({
+  open,
+  initialEmail,
+  onClose,
+  onDone
+}: {
+  open: boolean
+  initialEmail: string
+  onClose: () => void
+  onDone: (message: string, recoveryCode?: string) => void
+}): JSX.Element {
+  const [email, setEmail] = useState(initialEmail)
+  const [code, setCode] = useState('')
+  const [password, setPassword] = useState('')
+  const [sent, setSent] = useState(false)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (open) setEmail((current) => current || initialEmail)
+  }, [open, initialEmail])
+
+  function reset(): void {
+    setCode('')
+    setPassword('')
+    setSent(false)
+    setError(null)
+    setNotice(null)
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onClose={busy ? undefined : () => { reset(); onClose() }}
+      maxWidth="xs"
+      fullWidth
+    >
+      <DialogTitle>Reset your password</DialogTitle>
+      <DialogContent>
+        <Busy show={busy !== null} label={busy ?? undefined} />
+        {error && (
+          <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
+            {error}
+          </Alert>
+        )}
+        {notice && (
+          <Alert severity="success" sx={{ mb: 2 }}>
+            {notice}
+          </Alert>
+        )}
+        <Stack spacing={2} sx={{ mt: 0.5 }}>
+          <TextField
+            size="small"
+            label="Email"
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            disabled={sent}
+          />
+          <Button
+            variant={sent ? 'text' : 'outlined'}
+            disabled={!email || busy !== null}
+            onClick={async () => {
+              setBusy('Sending code…')
+              setError(null)
+              try {
+                const result = await window.api.auth.otpRequest(email)
+                if (result.ok) {
+                  setSent(true)
+                  setNotice('If that address has an account, a code is on its way. It expires in 15 minutes.')
+                } else setError(result.error ?? 'Could not send the code.')
+              } finally {
+                setBusy(null)
+              }
+            }}
+          >
+            {sent ? 'Send another code' : 'Email me a code'}
+          </Button>
+
+          {sent && (
+            <>
+              <TextField
+                size="small"
+                label="6-digit code"
+                value={code}
+                onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                inputProps={{ style: { fontFamily: 'monospace', letterSpacing: 5 } }}
+              />
+              <Secret
+                label="New password"
+                value={password}
+                onChange={setPassword}
+                helper="At least 10 characters."
+                autoComplete="new-password"
+              />
+              <Alert severity="warning">
+                Existing cloud backups become unreadable after a password change — they are
+                encrypted with a key derived from the old one. Back up again afterwards.
+              </Alert>
+            </>
+          )}
+        </Stack>
+      </DialogContent>
+      <DialogActions sx={{ px: 3, pb: 2 }}>
+        <Button onClick={() => { reset(); onClose() }} disabled={busy !== null}>
+          Cancel
+        </Button>
+        <Button
+          variant="contained"
+          disabled={!sent || code.length < 4 || password.length < 10 || busy !== null}
+          onClick={async () => {
+            setBusy('Changing password…')
+            setError(null)
+            try {
+              const result = await window.api.auth.otpReset(email, code, password)
+              if (result.ok) {
+                reset()
+                onDone('Password changed. You are signed in.', result.recoveryCode)
+              } else setError(result.error ?? 'That code is not right.')
+            } finally {
+              setBusy(null)
+            }
+          }}
+        >
+          Change password
         </Button>
       </DialogActions>
     </Dialog>

@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  Box, Container, CssBaseline, Fade, Stack, ThemeProvider, Typography, useMediaQuery
+  Box, Button, Container, CssBaseline, Fade, Stack, ThemeProvider, Typography, useMediaQuery
 } from '@mui/material'
+import FolderOpenIcon from '@mui/icons-material/FolderOpen'
+import DownloadIcon from '@mui/icons-material/Download'
+import ArrowBackIcon from '@mui/icons-material/ArrowBack'
 import type { AppInfo, Settings as SettingsShape } from '../preload/index'
 import { buildTheme } from './theme'
 import {
@@ -20,7 +23,8 @@ import History from './screens/History'
 import Sheets from './screens/Sheets'
 import Account from './screens/Account'
 import Network from './screens/Network'
-import { About, LicencesDialog, SettingsScreen } from './screens/Pages'
+import Dashboard, { type Dest } from './screens/Dashboard'
+import { AboutDialog, LicencesDialog, SettingsScreen } from './screens/Pages'
 import Docs from './screens/Docs'
 
 /**
@@ -30,20 +34,20 @@ import Docs from './screens/Docs'
  * editor both need, and leaves two places for "where am I" to disagree.
  */
 
-type Route = 'invoices' | 'history' | 'sheets' | 'network' | 'profile' | 'settings' | 'about'
+type Route = 'dashboard' | 'invoices' | 'history' | 'sheets' | 'network' | 'profile' | 'settings'
 
 const TITLES: Record<Route, string> = {
+  dashboard: 'Dashboard',
   invoices: 'Invoices',
   history: 'History',
   sheets: 'Spreadsheets',
   network: 'Local network',
   profile: 'Profile',
-  settings: 'Settings',
-  about: 'About'
+  settings: 'Settings'
 }
 
 export default function App(): JSX.Element {
-  const [route, setRoute] = useState<Route>('invoices')
+  const [route, setRoute] = useState<Route>('dashboard')
   const [info, setInfo] = useState<AppInfo | null>(null)
   const [settings, setSettings] = useState<SettingsShape | null>(null)
   const [confirmSpec, setConfirmSpec] = useState<ConfirmSpec | null>(null)
@@ -54,6 +58,7 @@ export default function App(): JSX.Element {
   const [updateReady, setUpdateReady] = useState<string | null>(null)
   const [updated, setUpdated] = useState<string | null>(null)
   const [needSignIn, setNeedSignIn] = useState(false)
+  const [aboutOpen, setAboutOpen] = useState(false)
   const [signedIn, setSignedIn] = useState(false)
 
   const prefersDark = useMediaQuery('(prefers-color-scheme: dark)')
@@ -99,6 +104,7 @@ export default function App(): JSX.Element {
         })
       } else if (action === 'reveal-output') void window.api.paths.reveal()
       else if (action === 'docs') setDocsOpen(true)
+      else if (action === 'about') setAboutOpen(true)
       else if (action === 'licences') setLicencesOpen(true)
       else if (action === 'check-updates') {
         void window.api.updates.check().then((s) => {
@@ -155,14 +161,49 @@ export default function App(): JSX.Element {
             bgcolor: 'background.paper'
           }}
         >
+          {route !== 'dashboard' && (
+            <Button
+              size="small"
+              color="inherit"
+              startIcon={<ArrowBackIcon />}
+              onClick={() => setRoute('dashboard')}
+              sx={{ mr: 1.5 }}
+            >
+              Back
+            </Button>
+          )}
           <Typography variant="subtitle2" sx={{ fontWeight: 680, letterSpacing: '-.01em' }}>
             {TITLES[route]}
           </Typography>
+          {route === 'invoices' && (
+            <>
+              <Box sx={{ flexGrow: 1 }} />
+              <Button
+                size="small"
+                variant="contained"
+                startIcon={<FolderOpenIcon />}
+                onClick={() => window.dispatchEvent(new CustomEvent('utility:action', { detail: 'import' }))}
+              >
+                Import
+              </Button>
+              <Button
+                size="small"
+                startIcon={<DownloadIcon />}
+                sx={{ ml: 1 }}
+                onClick={() => window.dispatchEvent(new CustomEvent('utility:action', { detail: 'export' }))}
+              >
+                Export register
+              </Button>
+            </>
+          )}
         </Stack>
 
         <Container maxWidth="xl" sx={{ flexGrow: 1, py: 3.5 }}>
           <Fade in key={route} timeout={240}>
             <Box>
+              {route === 'dashboard' && (
+                <Dashboard onNavigate={(dest: Dest) => setRoute(dest)} signedIn={signedIn} />
+              )}
               {route === 'invoices' && <Invoices confirm={confirm} />}
               {route === 'history' && <History confirm={confirm} />}
               {route === 'sheets' && <Sheets confirm={confirm} />}
@@ -184,7 +225,6 @@ export default function App(): JSX.Element {
                   onConsent={setConsent}
                 />
               )}
-              {route === 'about' && info && <About info={info} />}
             </Box>
           </Fade>
         </Container>
@@ -209,6 +249,9 @@ export default function App(): JSX.Element {
       <ConsentBanner open={settings?.needsConsent === true} onDecide={setConsent} />
       <LicencesDialog open={licencesOpen} onClose={() => setLicencesOpen(false)} />
       <Docs open={docsOpen} onClose={() => setDocsOpen(false)} />
+      {info && (
+        <AboutDialog open={aboutOpen} info={info} onClose={() => setAboutOpen(false)} />
+      )}
       <UpdateReadyDialog version={updateReady} onClose={() => setUpdateReady(null)} />
       <UpdatedDialog version={updated} onClose={() => setUpdated(null)} />
       <SignInRequiredDialog

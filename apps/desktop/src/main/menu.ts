@@ -72,13 +72,14 @@ export function buildMenu(): void {
     {
       label: '&View',
       submenu: [
-        { label: 'Invoices', accelerator: 'CmdOrCtrl+1', click: () => send('menu:navigate', 'invoices') },
-        { label: 'History', accelerator: 'CmdOrCtrl+2', click: () => send('menu:navigate', 'history') },
-        { label: 'Spreadsheets', accelerator: 'CmdOrCtrl+3', click: () => send('menu:navigate', 'sheets') },
-        { label: 'Local network', accelerator: 'CmdOrCtrl+4', click: () => send('menu:navigate', 'network') },
-        { label: 'Profile', accelerator: 'CmdOrCtrl+5', click: () => send('menu:navigate', 'profile') },
-        { label: 'Settings', accelerator: 'CmdOrCtrl+6', click: () => send('menu:navigate', 'settings') },
-        { label: 'About', accelerator: 'CmdOrCtrl+7', click: () => send('menu:navigate', 'about') },
+        { label: 'Dashboard', accelerator: 'CmdOrCtrl+1', click: () => send('menu:navigate', 'dashboard') },
+        { label: 'Invoices', accelerator: 'CmdOrCtrl+2', click: () => send('menu:navigate', 'invoices') },
+        { label: 'History', accelerator: 'CmdOrCtrl+3', click: () => send('menu:navigate', 'history') },
+        { label: 'Spreadsheets', accelerator: 'CmdOrCtrl+4', click: () => send('menu:navigate', 'sheets') },
+        { label: 'Local network', accelerator: 'CmdOrCtrl+5', click: () => send('menu:navigate', 'network') },
+        { label: 'Profile', accelerator: 'CmdOrCtrl+6', click: () => send('menu:navigate', 'profile') },
+        { label: 'Settings', accelerator: 'CmdOrCtrl+7', click: () => send('menu:navigate', 'settings') },
+        { label: 'About', accelerator: 'CmdOrCtrl+7', click: () => send('menu:action', 'about') },
         { type: 'separator' },
         {
           label: 'Toggle light / dark',
@@ -125,7 +126,7 @@ export function buildMenu(): void {
         { label: 'Check for updates', click: () => send('menu:action', 'check-updates') },
         { type: 'separator' },
         { label: 'Licences', click: () => send('menu:action', 'licences') },
-        { label: `About Utility ${app.getVersion()}`, click: () => send('menu:navigate', 'about') },
+        { label: `About Utility ${app.getVersion()}`, click: () => send('menu:action', 'about') },
         { type: 'separator' },
         { label: 'Toggle light / dark', accelerator: 'CmdOrCtrl+Shift+L', click: () => send('menu:action', 'toggle-theme') }
       ]
