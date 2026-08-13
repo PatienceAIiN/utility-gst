@@ -1,15 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  Box, Container, CssBaseline, Divider, Fade, IconButton, List, ListItemButton, ListItemIcon,
-  ListItemText, Stack, ThemeProvider, Tooltip, Typography, useMediaQuery
+  Box, Chip, Container, CssBaseline, Fade, IconButton, Stack, ThemeProvider, Tooltip, Typography,
+  useMediaQuery
 } from '@mui/material'
-import ReceiptLongIcon from '@mui/icons-material/ReceiptLong'
-import HistoryIcon from '@mui/icons-material/History'
-import TableChartIcon from '@mui/icons-material/TableChart'
-import SettingsIcon from '@mui/icons-material/Settings'
-import PersonOutlineIcon from '@mui/icons-material/PersonOutline'
-import LanIcon from '@mui/icons-material/Lan'
-import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined'
 import FeedbackOutlinedIcon from '@mui/icons-material/FeedbackOutlined'
 import DarkModeIcon from '@mui/icons-material/DarkMode'
 import LightModeIcon from '@mui/icons-material/LightMode'
@@ -30,17 +23,24 @@ import Account from './screens/Account'
 import Network from './screens/Network'
 import { About, SettingsScreen } from './screens/Pages'
 
+/**
+ * Navigation lives entirely in the native application menu (View, and the
+ * Ctrl+1..7 accelerators). There is no in-app rail: duplicating the menu inside
+ * the window costs horizontal space that the review grid and the spreadsheet
+ * editor both need, and leaves two places for "where am I" to disagree.
+ */
+
 type Route = 'invoices' | 'history' | 'sheets' | 'network' | 'profile' | 'settings' | 'about'
 
-const NAV: { key: Route; label: string; icon: JSX.Element }[] = [
-  { key: 'invoices', label: 'Invoices', icon: <ReceiptLongIcon /> },
-  { key: 'history', label: 'History', icon: <HistoryIcon /> },
-  { key: 'sheets', label: 'Spreadsheets', icon: <TableChartIcon /> },
-  { key: 'network', label: 'Local network', icon: <LanIcon /> },
-  { key: 'profile', label: 'Profile', icon: <PersonOutlineIcon /> },
-  { key: 'settings', label: 'Settings', icon: <SettingsIcon /> },
-  { key: 'about', label: 'About', icon: <InfoOutlinedIcon /> }
-]
+const TITLES: Record<Route, string> = {
+  invoices: 'Invoices',
+  history: 'History',
+  sheets: 'Spreadsheets',
+  network: 'Local network',
+  profile: 'Profile',
+  settings: 'Settings',
+  about: 'About'
+}
 
 export default function App(): JSX.Element {
   const [route, setRoute] = useState<Route>('invoices')
@@ -49,42 +49,24 @@ export default function App(): JSX.Element {
   const [confirmSpec, setConfirmSpec] = useState<ConfirmSpec | null>(null)
   const [feedbackOpen, setFeedbackOpen] = useState(false)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const [signedIn, setSignedIn] = useState(false)
 
   const prefersDark = useMediaQuery('(prefers-color-scheme: dark)')
   const mode: 'light' | 'dark' =
     settings?.theme === 'system' || !settings ? (prefersDark ? 'dark' : 'light') : settings.theme
   const theme = useMemo(() => buildTheme(mode), [mode])
 
+  const refreshAuth = useCallback(() => {
+    void window.api.auth.status().then((s) => setSignedIn(s.signedIn))
+  }, [])
+
   useEffect(() => {
     void window.api.app.info().then(setInfo)
     void window.api.settings.get().then(setSettings)
-  }, [])
+    refreshAuth()
+  }, [refreshAuth])
 
   const confirm = useCallback((spec: ConfirmSpec) => setConfirmSpec(spec), [])
-
-  // Menu intents. The menu never acts directly; it asks the renderer, which
-  // owns screen state.
-  useEffect(() => {
-    const offNav = window.api.menu.onNavigate((route) => setRoute(route as Route))
-    const offAction = window.api.menu.onAction((action) => {
-      if (action === 'feedback') setFeedbackOpen(true)
-      else if (action === 'shortcuts') setShortcutsOpen(true)
-      else if (action === 'toggle-theme') {
-        void window.api.settings.get().then((s) => {
-          const next = s.theme === 'dark' ? 'light' : 'dark'
-          void window.api.settings.patch({ theme: next }).then(setSettings)
-        })
-      } else if (action === 'reveal-output') void window.api.paths.reveal()
-      else if (action === 'import') setRoute('invoices')
-      else if (action === 'export') setRoute('invoices')
-      else if (action === 'open-sheet' || action === 'save-sheet') setRoute('sheets')
-      else if (action === 'licences') setRoute('settings')
-    })
-    return () => {
-      offNav()
-      offAction()
-    }
-  }, [])
 
   const patchSettings = useCallback(
     (patch: Partial<Pick<SettingsShape, 'theme' | 'confirmOnExit'>>) => {
@@ -97,117 +79,118 @@ export default function App(): JSX.Element {
     void window.api.settings.setConsent(analytics, cloudSync).then(setSettings)
   }, [])
 
+  // Menu intents. The menu never acts directly; it asks the renderer, which owns
+  // screen state.
+  useEffect(() => {
+    const offNav = window.api.menu.onNavigate((next) => setRoute(next as Route))
+    const offAction = window.api.menu.onAction((action) => {
+      if (action === 'feedback') setFeedbackOpen(true)
+      else if (action === 'shortcuts') setShortcutsOpen(true)
+      else if (action === 'toggle-theme') {
+        void window.api.settings.get().then((current) => {
+          void window.api.settings
+            .patch({ theme: current.theme === 'dark' ? 'light' : 'dark' })
+            .then(setSettings)
+        })
+      } else if (action === 'reveal-output') void window.api.paths.reveal()
+      else if (action === 'import' || action === 'export') setRoute('invoices')
+      else if (action === 'open-sheet' || action === 'save-sheet') setRoute('sheets')
+      else if (action === 'licences') setRoute('settings')
+    })
+    return () => {
+      offNav()
+      offAction()
+    }
+  }, [])
+
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      <Box sx={{ display: 'flex', minHeight: '100vh', bgcolor: 'background.default' }}>
-        {/* Navigation rail */}
-        <Box
-          component="nav"
+      <Box
+        sx={{
+          minHeight: '100vh',
+          display: 'flex',
+          flexDirection: 'column',
+          bgcolor: 'background.default'
+        }}
+      >
+        {/* Slim context bar: says where you are without repeating the menu. */}
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={1.5}
           sx={{
-            width: 216,
-            flexShrink: 0,
-            borderRight: 1,
+            px: 3,
+            py: 1.25,
+            borderBottom: 1,
             borderColor: 'divider',
-            bgcolor: 'background.paper',
-            display: 'flex',
-            flexDirection: 'column'
+            bgcolor: 'background.paper'
           }}
         >
-          <Box sx={{ px: 2.5, py: 2.5 }}>
-            <Typography variant="h6" sx={{ lineHeight: 1.1 }}>
-              Utility
-            </Typography>
-            <Typography variant="caption" color="text.secondary">
-              GST Sales Register
-            </Typography>
-          </Box>
-          <Divider />
-          <List sx={{ px: 1.25, py: 1.5, flexGrow: 1 }}>
-            {NAV.map((item) => (
-              <ListItemButton
-                key={item.key}
-                selected={route === item.key}
-                onClick={() => setRoute(item.key)}
-                sx={{
-                  borderRadius: 2,
-                  mb: 0.5,
-                  transition: 'background-color 160ms ease',
-                  '&.Mui-selected': { bgcolor: 'action.selected' }
-                }}
-              >
-                <ListItemIcon sx={{ minWidth: 38, color: route === item.key ? 'primary.main' : 'inherit' }}>
-                  {item.icon}
-                </ListItemIcon>
-                <ListItemText
-                  primary={item.label}
-                  primaryTypographyProps={{
-                    variant: 'body2',
-                    fontWeight: route === item.key ? 650 : 500
-                  }}
+          <Typography variant="subtitle2" sx={{ fontWeight: 680, letterSpacing: '-.01em' }}>
+            {TITLES[route]}
+          </Typography>
+          <Chip size="small" variant="outlined" label="View menu · Ctrl 1–7" />
+          <Box sx={{ flexGrow: 1 }} />
+          <Tooltip title="Send feedback">
+            <IconButton size="small" onClick={() => setFeedbackOpen(true)}>
+              <FeedbackOutlinedIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title={mode === 'dark' ? 'Light theme' : 'Dark theme'}>
+            <IconButton
+              size="small"
+              onClick={() => patchSettings({ theme: mode === 'dark' ? 'light' : 'dark' })}
+            >
+              {mode === 'dark' ? (
+                <LightModeIcon fontSize="small" />
+              ) : (
+                <DarkModeIcon fontSize="small" />
+              )}
+            </IconButton>
+          </Tooltip>
+        </Stack>
+
+        <Container maxWidth="xl" sx={{ flexGrow: 1, py: 3.5 }}>
+          <Fade in key={route} timeout={240}>
+            <Box>
+              {route === 'invoices' && <Invoices confirm={confirm} />}
+              {route === 'history' && <History confirm={confirm} />}
+              {route === 'sheets' && <Sheets confirm={confirm} />}
+              {route === 'network' && <Network confirm={confirm} />}
+              {route === 'profile' && (
+                <Account
+                  cloudEnabled={settings?.consent?.cloudSync === true}
+                  onCloudToggle={(on) => setConsent(settings?.consent?.analytics ?? false, on)}
+                  onAuthChange={refreshAuth}
+                  confirm={confirm}
                 />
-              </ListItemButton>
-            ))}
-          </List>
-          <Divider />
-          <Stack direction="row" alignItems="center" sx={{ px: 1.5, py: 1 }}>
-            <Tooltip title="Send feedback">
-              <IconButton size="small" onClick={() => setFeedbackOpen(true)}>
-                <FeedbackOutlinedIcon fontSize="small" />
-              </IconButton>
-            </Tooltip>
-            <Tooltip title={mode === 'dark' ? 'Light theme' : 'Dark theme'}>
-              <IconButton
-                size="small"
-                onClick={() => patchSettings({ theme: mode === 'dark' ? 'light' : 'dark' })}
-              >
-                {mode === 'dark' ? <LightModeIcon fontSize="small" /> : <DarkModeIcon fontSize="small" />}
-              </IconButton>
-            </Tooltip>
-          </Stack>
-        </Box>
+              )}
+              {route === 'settings' && info && (
+                <SettingsScreen
+                  info={info}
+                  settings={settings}
+                  signedIn={signedIn}
+                  onPatch={patchSettings}
+                  onConsent={setConsent}
+                />
+              )}
+              {route === 'about' && info && <About info={info} />}
+            </Box>
+          </Fade>
+        </Container>
 
-        {/* Content */}
-        <Box sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-          <Container maxWidth="xl" sx={{ flexGrow: 1, py: 4 }}>
-            <Fade in key={route} timeout={240}>
-              <Box>
-                {route === 'invoices' && <Invoices confirm={confirm} />}
-                {route === 'history' && <History confirm={confirm} />}
-                {route === 'sheets' && <Sheets confirm={confirm} />}
-                {route === 'network' && <Network confirm={confirm} />}
-                {route === 'profile' && (
-                  <Account
-                    cloudEnabled={settings?.consent?.cloudSync === true}
-                    onCloudToggle={(on) => setConsent(settings?.consent?.analytics ?? false, on)}
-                    confirm={confirm}
-                  />
-                )}
-                {route === 'settings' && info && (
-                  <SettingsScreen
-                    info={info}
-                    settings={settings}
-                    onPatch={patchSettings}
-                    onConsent={setConsent}
-                  />
-                )}
-                {route === 'about' && info && <About info={info} />}
-              </Box>
-            </Fade>
-          </Container>
-
-          <Box
-            component="footer"
-            sx={{ py: 1.5, textAlign: 'center', borderTop: 1, borderColor: 'divider' }}
-          >
-            <Brand />
-            {info && (
-              <Typography variant="caption" color="text.secondary">
-                {' '}
-                · v{info.version} (build {info.buildCode})
-              </Typography>
-            )}
-          </Box>
+        <Box
+          component="footer"
+          sx={{ py: 1.5, textAlign: 'center', borderTop: 1, borderColor: 'divider' }}
+        >
+          <Brand />
+          {info && (
+            <Typography variant="caption" color="text.secondary">
+              {' '}
+              · v{info.version} (build {info.buildCode})
+            </Typography>
+          )}
         </Box>
       </Box>
 

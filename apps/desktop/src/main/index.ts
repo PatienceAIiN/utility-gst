@@ -349,6 +349,12 @@ function registerIpc(): void {
   ipcMain.handle('auth:signOut', () => {
     auth.signOut()
     clearBackupKey()
+    // Cloud backup cannot function without the sign-in-derived key, so signing
+    // out switches it off rather than leaving a toggle on that does nothing.
+    const current = store.get().consent
+    if (current?.cloudSync) {
+      store.patch({ consent: { ...current, cloudSync: false } })
+    }
     return auth.status()
   })
   ipcMain.handle('auth:reset', (_event, raw: unknown) => {

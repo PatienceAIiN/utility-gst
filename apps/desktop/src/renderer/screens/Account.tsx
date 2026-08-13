@@ -19,10 +19,12 @@ const bytes = (n: number): string =>
 export default function Account({
   cloudEnabled,
   onCloudToggle,
+  onAuthChange,
   confirm
 }: {
   cloudEnabled: boolean
   onCloudToggle: (on: boolean) => void
+  onAuthChange: () => void
   confirm: (spec: ConfirmSpec) => void
 }): JSX.Element {
   const [status, setStatus] = useState<AuthStatus | null>(null)
@@ -48,10 +50,11 @@ export default function Account({
     const s = await window.api.auth.status()
     setStatus(s)
     setSync(await window.api.sync.status())
+    onAuthChange()
     if (s.account) {
       setProfile({ name: s.account.name, org: s.account.org ?? '', gstin: s.account.gstin ?? '' })
     }
-  }, [])
+  }, [onAuthChange])
 
   useEffect(() => {
     void refresh()

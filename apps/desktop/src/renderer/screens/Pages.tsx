@@ -143,11 +143,13 @@ function LicencesDialog({ open, onClose }: { open: boolean; onClose: () => void 
 export function SettingsScreen({
   info,
   settings,
+  signedIn,
   onPatch,
   onConsent
 }: {
   info: AppInfo
   settings: SettingsShape | null
+  signedIn: boolean
   onPatch: (patch: Partial<Pick<SettingsShape, 'theme' | 'confirmOnExit'>>) => void
   onConsent: (analytics: boolean, cloudSync: boolean) => void
 }): JSX.Element {
@@ -255,6 +257,7 @@ export function SettingsScreen({
             control={
               <Switch
                 checked={consent?.cloudSync ?? false}
+                disabled={!signedIn}
                 onChange={(e) => onConsent(consent?.analytics ?? false, e.target.checked)}
               />
             }
@@ -268,10 +271,16 @@ export function SettingsScreen({
           <Typography variant="caption" color="text.secondary" display="block">
             Encrypted, compressed backups so your register can be restored on another machine.
           </Typography>
+          {!signedIn && (
+            <Alert severity="info" sx={{ mt: 1.5 }}>
+              Sign in on the Profile page to enable cloud backup. The encryption key is derived from
+              your password, so there is nothing to encrypt a backup with until you do.
+            </Alert>
+          )}
 
-          {consent?.cloudSync && (
-            <Alert severity="info" sx={{ mt: 2 }}>
-              Backups run once you are signed in. Manage them on the Profile page.
+          {consent?.cloudSync && signedIn && (
+            <Alert severity="success" sx={{ mt: 2 }}>
+              Cloud backup is on. Run and review backups on the Profile page.
             </Alert>
           )}
           {consent && (

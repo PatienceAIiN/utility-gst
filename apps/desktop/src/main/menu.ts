@@ -13,12 +13,6 @@ function send(channel: string, payload?: unknown): void {
   BrowserWindow.getFocusedWindow()?.webContents.send(channel, payload)
 }
 
-const go = (route: string, accelerator?: string): MenuItemConstructorOptions => ({
-  label: route.charAt(0).toUpperCase() + route.slice(1).replace('-', ' '),
-  ...(accelerator ? { accelerator } : {}),
-  click: () => send('menu:navigate', route)
-})
-
 export function buildMenu(): void {
   const template: MenuItemConstructorOptions[] = [
     {
@@ -79,11 +73,13 @@ export function buildMenu(): void {
     {
       label: '&View',
       submenu: [
-        go('invoices', 'CmdOrCtrl+1'),
-        go('history', 'CmdOrCtrl+2'),
-        go('sheets', 'CmdOrCtrl+3'),
+        { label: 'Invoices', accelerator: 'CmdOrCtrl+1', click: () => send('menu:navigate', 'invoices') },
+        { label: 'History', accelerator: 'CmdOrCtrl+2', click: () => send('menu:navigate', 'history') },
+        { label: 'Spreadsheets', accelerator: 'CmdOrCtrl+3', click: () => send('menu:navigate', 'sheets') },
         { label: 'Local network', accelerator: 'CmdOrCtrl+4', click: () => send('menu:navigate', 'network') },
-        go('profile', 'CmdOrCtrl+5'),
+        { label: 'Profile', accelerator: 'CmdOrCtrl+5', click: () => send('menu:navigate', 'profile') },
+        { label: 'Settings', accelerator: 'CmdOrCtrl+6', click: () => send('menu:navigate', 'settings') },
+        { label: 'About', accelerator: 'CmdOrCtrl+7', click: () => send('menu:navigate', 'about') },
         { type: 'separator' },
         {
           label: 'Toggle light / dark',
