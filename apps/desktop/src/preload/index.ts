@@ -100,7 +100,52 @@ export interface SyncOutcome {
   path?: string
 }
 
+export type Permission = 'view' | 'read' | 'write'
+export interface MeshPeer {
+  deviceId: string
+  name: string
+  address: string
+  port: number
+  lastSeen: string
+  paired: boolean
+  grants: Permission[]
+}
+export interface MeshPairRequest {
+  deviceId: string
+  name: string
+  address: string
+  code: string
+  at: string
+}
+export interface MeshStatus {
+  enabled: boolean
+  deviceId: string
+  deviceName: string
+  port: number
+  addresses: string[]
+  peers: MeshPeer[]
+  requests: MeshPairRequest[]
+}
+
 const api = {
+  mesh: {
+    status: (): Promise<MeshStatus> => ipcRenderer.invoke('mesh:status'),
+    enable: (on: boolean): Promise<MeshStatus> => ipcRenderer.invoke('mesh:enable', on),
+    setName: (name: string): Promise<MeshStatus> => ipcRenderer.invoke('mesh:setName', name),
+    requestPair: (deviceId: string): Promise<{ ok: boolean; code?: string; error?: string }> =>
+      ipcRenderer.invoke('mesh:requestPair', { deviceId }),
+    approvePair: (deviceId: string, code: string): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('mesh:approvePair', { deviceId, code }),
+    rejectPair: (deviceId: string): Promise<MeshStatus> =>
+      ipcRenderer.invoke('mesh:rejectPair', { deviceId }),
+    setGrants: (deviceId: string, grants: Permission[]): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('mesh:setGrants', { deviceId, grants }),
+    unpair: (deviceId: string): Promise<MeshStatus> => ipcRenderer.invoke('mesh:unpair', { deviceId }),
+    browse: (deviceId: string): Promise<{ device: string; count: number; items: unknown[] }> =>
+      ipcRenderer.invoke('mesh:browse', { deviceId }),
+    share: (deviceId: string, id: string): Promise<unknown> =>
+      ipcRenderer.invoke('mesh:share', { deviceId, id })
+  },
   app: {
     info: (): Promise<AppInfo> => ipcRenderer.invoke('app:info')
   },

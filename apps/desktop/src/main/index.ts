@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { z } from 'zod'
 import { auth } from './auth'
 import { history } from './history'
+import { mesh, type Permission } from './mesh'
 import { baseDir, layoutPreview, outputDir } from './paths'
 import { sidecar } from './sidecar'
 import {
@@ -351,6 +352,50 @@ function registerIpc(): void {
   ipcMain.handle('sync:restore', async (_event, raw: unknown) =>
     restoreRemote(z.object({ name: z.string().min(1).max(200) }).parse(raw).name)
   )
+
+  // --- intranet mesh (off by default) ---
+  const DeviceId = z.object({ deviceId: z.string().min(1).max(64) })
+  const Grants = DeviceId.extend({
+    grants: z.array(z.enum(['view', 'read', 'write'])).max(3)
+  })
+
+  ipcMain.handle('mesh:status', () => mesh.status())
+  ipcMain.handle('mesh:enable', async (_event, raw: unknown) => {
+    const on = z.boolean().parse(raw)
+    if (on) await mesh.start()
+    else mesh.stop()
+    return mesh.status()
+  })
+  ipcMain.handle('mesh:setName', (_event, raw: unknown) => {
+    mesh.setDeviceName(z.string().min(1).max(80).parse(raw))
+    return mesh.status()
+  })
+  ipcMain.handle('mesh:requestPair', (_event, raw: unknown) =>
+    mesh.requestPair(DeviceId.parse(raw).deviceId)
+  )
+  ipcMain.handle('mesh:approvePair', (_event, raw: unknown) => {
+    const { deviceId, code } = DeviceId.extend({ code: z.string().min(4).max(8) }).parse(raw)
+    return mesh.approvePair(deviceId, code)
+  })
+  ipcMain.handle('mesh:rejectPair', (_event, raw: unknown) => {
+    mesh.rejectPair(DeviceId.parse(raw).deviceId)
+    return mesh.status()
+  })
+  ipcMain.handle('mesh:setGrants', (_event, raw: unknown) => {
+    const { deviceId, grants } = Grants.parse(raw)
+    return mesh.setGrants(deviceId, grants as Permission[])
+  })
+  ipcMain.handle('mesh:unpair', (_event, raw: unknown) => {
+    mesh.unpair(DeviceId.parse(raw).deviceId)
+    return mesh.status()
+  })
+  ipcMain.handle('mesh:browse', (_event, raw: unknown) => mesh.browse(DeviceId.parse(raw).deviceId))
+  ipcMain.handle('mesh:share', (_event, raw: unknown) => {
+    const { deviceId, id } = DeviceId.extend({ id: z.string().uuid() }).parse(raw)
+    const record = history.get(id)
+    if (!record) throw new Error('That record no longer exists.')
+    return mesh.pushRecord(deviceId, record)
+  })
 
   // --- download location ---
   ipcMain.handle('paths:info', () => layoutPreview())
