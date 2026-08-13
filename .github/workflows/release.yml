@@ -148,7 +148,12 @@ jobs:
           # release, so they must be attached alongside the installers. Each
           # channel emits a DIFFERENTLY named manifest (latest.yml / legacy.yml)
           # because publish.channel is set per config, so there is no collision.
-          mapfile -t ASSETS < <(find dist -type f \( -name '*.exe' -o -name '*.blockmap' -o -name '*.yml' \) | sort)
+          # builder-debug.yml is electron-builder's own diagnostic output, emitted
+          # by every channel under the same name. It is not an update manifest
+          # and must not be published.
+          mapfile -t ASSETS < <(find dist -type f \
+            \( -name '*.exe' -o -name '*.blockmap' -o -name '*.yml' \) \
+            ! -name 'builder-debug.yml' | sort)
           printf 'attaching: %s\n' "${ASSETS[@]}"
           [ "${#ASSETS[@]}" -gt 0 ] || { echo "::error::no artifacts found"; exit 1; }
 
