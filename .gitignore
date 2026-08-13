@@ -20,7 +20,7 @@ release/
 __pycache__/
 *.py[cod]
 .venv/
-build/
+/sidecar/build/
 *.spec.bak
 .mypy_cache/
 .pytest_cache/
@@ -47,3 +47,8 @@ build/
 # the golden test skips when absent. See README "Test fixtures".
 /sidecar/tests/fixtures/
 /samples/expected/
+
+# Icons and installer resources MUST be committed: the Windows packaging step
+# resolves build/icon.ico from the repo.
+!/apps/desktop/build/
+!/apps/desktop/build/**
