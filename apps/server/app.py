@@ -15,6 +15,7 @@ port, its own systemd unit. It touches nothing else.
 from __future__ import annotations
 
 import hashlib
+import uuid
 import hmac
 import os
 import secrets
@@ -131,6 +132,13 @@ CREATE TABLE IF NOT EXISTS activity (
   at         timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS activity_at_idx ON activity (at DESC);
+
+-- Screen-lock state and admin-issued grants. The passcode itself never leaves
+-- the machine -- only the fact that a lock is on, so support can act on it.
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS locked        boolean NOT NULL DEFAULT false;
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS locked_at     timestamptz;
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS unlock_grant  timestamptz;
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS restore_name  text;
 """
 
 
@@ -291,6 +299,69 @@ def get_backup(name: str, account_id: Annotated[str, Depends(current_account)]) 
         raise HTTPException(404, "No such backup.")
     log(account_id, "restore")
     return Response(path.read_bytes(), media_type="application/octet-stream")
+
+
+# --- screen lock and restore hand-off ----------------------------------------
+#
+# The passcode is hashed and stored on the machine and is never transmitted. The
+# server only ever knows that a lock is switched on, which is what lets support
+# clear one for a user who has forgotten it. An admin can therefore release a
+# lock, but can never learn or set a passcode.
+class LockState(BaseModel):
+    locked: bool
+
+
+@app.post("/v1/lock")
+def report_lock(
+    body: LockState, account_id: Annotated[str, Depends(current_account)]
+) -> dict[str, bool]:
+    with db() as conn:
+        conn.execute(
+            "UPDATE accounts SET locked = %s, locked_at = CASE WHEN %s THEN now() END,"
+            " unlock_grant = NULL WHERE id = %s",
+            (body.locked, body.locked, account_id),
+        )
+    log(account_id, "lock_on" if body.locked else "lock_off")
+    return {"ok": True}
+
+
+@app.get("/v1/lock")
+def lock_status(account_id: Annotated[str, Depends(current_account)]) -> dict[str, object]:
+    """Polled by the lock screen so an admin release can take effect."""
+    with db() as conn:
+        row = conn.execute(
+            "SELECT locked, unlock_grant, restore_name FROM accounts WHERE id = %s",
+            (account_id,),
+        ).fetchone()
+    if not row:
+        raise HTTPException(404, "No such account.")
+    return {"locked": row[0], "unlockGranted": row[1] is not None, "restoreName": row[2]}
+
+
+@app.post("/v1/lock/consume")
+def consume_unlock(account_id: Annotated[str, Depends(current_account)]) -> dict[str, bool]:
+    """The app confirms it has cleared the local passcode, so the grant is spent."""
+    with db() as conn:
+        row = conn.execute(
+            "SELECT unlock_grant FROM accounts WHERE id = %s", (account_id,)
+        ).fetchone()
+        if not row or row[0] is None:
+            raise HTTPException(409, "No unlock has been issued for this account.")
+        conn.execute(
+            "UPDATE accounts SET locked = false, locked_at = NULL, unlock_grant = NULL"
+            " WHERE id = %s",
+            (account_id,),
+        )
+    log(account_id, "lock_released_by_admin")
+    return {"ok": True}
+
+
+@app.post("/v1/restore/ack")
+def ack_restore(account_id: Annotated[str, Depends(current_account)]) -> dict[str, bool]:
+    with db() as conn:
+        conn.execute("UPDATE accounts SET restore_name = NULL WHERE id = %s", (account_id,))
+    log(account_id, "restore_applied")
+    return {"ok": True}
 
 
 # --- feedback ---------------------------------------------------------------
@@ -492,6 +563,18 @@ def admin_overview(request: Request) -> dict[str, object]:
     }
 
 
+def account_id_or_404(user_id: str) -> str:
+    """Reject a malformed account id before it reaches Postgres.
+
+    The column is a uuid, so anything else makes the driver raise and the caller
+    sees an opaque 500. A wrong id is a missing account, and should say so.
+    """
+    try:
+        return str(uuid.UUID(user_id))
+    except ValueError:
+        raise HTTPException(404, "No such account.") from None
+
+
 @app.get("/v1/admin/users")
 def admin_users(request: Request, q: str = "", limit: int = 100) -> dict[str, object]:
     admin_guard(request)
@@ -500,7 +583,8 @@ def admin_users(request: Request, q: str = "", limit: int = 100) -> dict[str, ob
         rows = conn.execute(
             "SELECT a.id, a.email, a.name, a.org, a.gstin, a.created_at, a.last_login_at,"
             " (SELECT count(*) FROM backups b WHERE b.account_id = a.id),"
-            " (SELECT coalesce(sum(b.bytes),0) FROM backups b WHERE b.account_id = a.id)"
+            " (SELECT coalesce(sum(b.bytes),0) FROM backups b WHERE b.account_id = a.id),"
+            " a.locked, a.locked_at, a.unlock_grant, a.restore_name"
             " FROM accounts a"
             " WHERE (%s = '' OR lower(a.email) LIKE %s OR lower(a.name) LIKE %s)"
             " ORDER BY a.created_at DESC LIMIT %s",
@@ -512,6 +596,8 @@ def admin_users(request: Request, q: str = "", limit: int = 100) -> dict[str, ob
                 "id": str(r[0]), "email": r[1], "name": r[2], "org": r[3], "gstin": r[4],
                 "createdAt": r[5].isoformat(), "lastLoginAt": r[6].isoformat() if r[6] else None,
                 "backups": r[7], "backupBytes": int(r[8]),
+                "locked": r[9], "lockedAt": r[10].isoformat() if r[10] else None,
+                "unlockGranted": r[11] is not None, "restorePending": r[12],
             }
             for r in rows
         ]
@@ -527,6 +613,7 @@ class AdminUserPatch(BaseModel):
 @app.patch("/v1/admin/users/{user_id}")
 def admin_update_user(user_id: str, body: AdminUserPatch, request: Request) -> dict[str, bool]:
     admin_guard(request)
+    user_id = account_id_or_404(user_id)
     fields = {k: v for k, v in body.model_dump().items() if v is not None}
     if not fields:
         return {"ok": True}
@@ -540,6 +627,7 @@ def admin_update_user(user_id: str, body: AdminUserPatch, request: Request) -> d
 @app.delete("/v1/admin/users/{user_id}")
 def admin_delete_user(user_id: str, request: Request) -> dict[str, bool]:
     admin_guard(request)
+    user_id = account_id_or_404(user_id)
     # Deleting an account also removes its stored backups from disk. Leaving
     # encrypted blobs behind after a deletion request would defeat the point.
     directory = BACKUP_DIR / user_id
@@ -550,6 +638,107 @@ def admin_delete_user(user_id: str, request: Request) -> dict[str, bool]:
     with db() as conn:
         conn.execute("DELETE FROM accounts WHERE id = %s", (user_id,))
     log(None, "admin_user_delete", user_id)
+    return {"ok": True}
+
+
+@app.post("/v1/admin/users/{user_id}/unlock")
+def admin_unlock_user(user_id: str, request: Request) -> dict[str, bool]:
+    """Release a screen lock the user set on their own machine.
+
+    This does not reveal or change the passcode -- the server has never held it.
+    It records permission for that account's app to clear its own lock the next
+    time it can reach the network, and the app confirms once it has.
+    """
+    admin_guard(request)
+    user_id = account_id_or_404(user_id)
+    with db() as conn:
+        row = conn.execute("SELECT locked FROM accounts WHERE id = %s", (user_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "No such account.")
+        if not row[0]:
+            raise HTTPException(409, "That account has no screen lock set.")
+        conn.execute("UPDATE accounts SET unlock_grant = now() WHERE id = %s", (user_id,))
+    log(user_id, "admin_unlock_issued")
+    return {"ok": True}
+
+
+@app.get("/v1/admin/users/{user_id}/backups")
+def admin_user_backups(user_id: str, request: Request) -> dict[str, object]:
+    admin_guard(request)
+    user_id = account_id_or_404(user_id)
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT name, bytes, sha256, at FROM backups WHERE account_id = %s"
+            " ORDER BY at DESC LIMIT 50",
+            (user_id,),
+        ).fetchall()
+    on_disk = {p.name for p in (BACKUP_DIR / user_id).glob("*")} if (
+        BACKUP_DIR / user_id).is_dir() else set()
+    return {
+        "items": [
+            {"name": r[0], "bytes": r[1], "sha256": r[2], "at": r[3].isoformat(),
+             "available": r[0] in on_disk}
+            for r in rows
+        ]
+    }
+
+
+@app.get("/v1/admin/users/{user_id}/backups/{name}")
+def admin_download_backup(user_id: str, name: str, request: Request) -> Response:
+    """Hand back the stored bundle exactly as the app uploaded it.
+
+    It is encrypted with a key derived on the user's machine, so this is a
+    sealed blob: it can be returned to its owner but not read here, and that is
+    deliberate. Support can restore a customer, not read their books.
+    """
+    admin_guard(request)
+    user_id = account_id_or_404(user_id)
+    safe = "".join(c for c in name if c.isalnum() or c in "-_.")[:120]
+    path = BACKUP_DIR / user_id / safe
+    if not path.is_file():
+        raise HTTPException(404, "That backup is no longer on disk.")
+    log(user_id, "admin_backup_download", safe)
+    return Response(
+        path.read_bytes(),
+        media_type="application/octet-stream",
+        headers={"content-disposition": f'attachment; filename="{safe}"'},
+    )
+
+
+class AdminRestore(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+
+
+@app.post("/v1/admin/users/{user_id}/restore")
+def admin_apply_backup(user_id: str, body: AdminRestore, request: Request) -> dict[str, bool]:
+    """Queue a backup for the account to restore.
+
+    The server cannot decrypt the bundle, so it cannot perform the restore
+    itself. It marks which one to apply; the app fetches and decrypts it with
+    the user's own key on next sync, and acknowledges when done.
+    """
+    admin_guard(request)
+    user_id = account_id_or_404(user_id)
+    safe = "".join(c for c in body.name if c.isalnum() or c in "-_.")[:120]
+    if not (BACKUP_DIR / user_id / safe).is_file():
+        raise HTTPException(404, "That backup is no longer on disk.")
+    with db() as conn:
+        updated = conn.execute(
+            "UPDATE accounts SET restore_name = %s WHERE id = %s", (safe, user_id)
+        ).rowcount
+    if not updated:
+        raise HTTPException(404, "No such account.")
+    log(user_id, "admin_restore_queued", safe)
+    return {"ok": True}
+
+
+@app.delete("/v1/admin/users/{user_id}/restore")
+def admin_cancel_restore(user_id: str, request: Request) -> dict[str, bool]:
+    admin_guard(request)
+    user_id = account_id_or_404(user_id)
+    with db() as conn:
+        conn.execute("UPDATE accounts SET restore_name = NULL WHERE id = %s", (user_id,))
+    log(user_id, "admin_restore_cancelled")
     return {"ok": True}
 
 

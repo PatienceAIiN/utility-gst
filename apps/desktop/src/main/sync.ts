@@ -102,6 +102,92 @@ export async function listRemote(): Promise<RemoteBackup[]> {
 }
 
 /**
+ * Tell the server whether a screen lock is switched on.
+ *
+ * The passcode itself never leaves this machine -- only the fact that one is
+ * set, which is what lets support release a lock for someone who has forgotten
+ * theirs. Failure here is deliberately silent: the lock is enforced locally and
+ * must keep working with no network at all.
+ */
+export async function reportLock(locked: boolean): Promise<void> {
+  const url = endpoint()
+  if (!url || !serverToken) return
+  try {
+    await fetch(`${url.replace(/\/$/, '')}/v1/lock`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${serverToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ locked }),
+      signal: AbortSignal.timeout(10000)
+    })
+  } catch {
+    /* offline; the local lock is unaffected */
+  }
+}
+
+export interface RemoteLockState {
+  unlockGranted: boolean
+  restoreName: string | null
+}
+
+export async function lockState(): Promise<RemoteLockState> {
+  const url = endpoint()
+  if (!url || !serverToken) return { unlockGranted: false, restoreName: null }
+  try {
+    const response = await fetch(`${url.replace(/\/$/, '')}/v1/lock`, {
+      headers: { authorization: `Bearer ${serverToken}` },
+      signal: AbortSignal.timeout(10000)
+    })
+    if (!response.ok) return { unlockGranted: false, restoreName: null }
+    const data = (await response.json()) as RemoteLockState
+    return { unlockGranted: !!data.unlockGranted, restoreName: data.restoreName ?? null }
+  } catch {
+    return { unlockGranted: false, restoreName: null }
+  }
+}
+
+/** Confirm the local lock has actually been cleared, so the grant is spent once. */
+export async function consumeUnlock(): Promise<void> {
+  const url = endpoint()
+  if (!url || !serverToken) return
+  try {
+    await fetch(`${url.replace(/\/$/, '')}/v1/lock/consume`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${serverToken}` },
+      signal: AbortSignal.timeout(10000)
+    })
+  } catch {
+    /* the local lock is already off; the grant expires on the next report */
+  }
+}
+
+/**
+ * Apply a restore an administrator queued for this account.
+ *
+ * The server holds only the sealed bundle, so the decryption happens here with
+ * the user's own key. It is acknowledged only after it succeeds, which means a
+ * failed restore is retried rather than silently lost.
+ */
+export async function applyQueuedRestore(): Promise<string | null> {
+  const state = await lockState()
+  if (!state.restoreName) return null
+  const outcome = await restoreRemote(state.restoreName)
+  if (!outcome.ok) return null
+  const url = endpoint()
+  if (url && serverToken) {
+    try {
+      await fetch(`${url.replace(/\/$/, '')}/v1/restore/ack`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${serverToken}` },
+        signal: AbortSignal.timeout(10000)
+      })
+    } catch {
+      /* retried next launch; restoring twice is harmless */
+    }
+  }
+  return state.restoreName
+}
+
+/**
  * Restore on another machine. The bundle is decrypted locally with the key
  * derived from the password, so a server compromise yields nothing readable.
  */

@@ -45,6 +45,30 @@
   .msg{margin-top:12px;font-size:13px;min-height:18px}
   .row{display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap}
   .hide{display:none}
+  button:disabled{opacity:.55;cursor:progress}
+  .spin{display:inline-block;width:12px;height:12px;border:2px solid currentColor;
+        border-right-color:transparent;border-radius:50%;animation:sp .65s linear infinite;
+        vertical-align:-1px;margin-right:7px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .lockpill{background:rgba(138,90,0,.12);color:var(--warn);border-color:rgba(138,90,0,.3)}
+  .grantpill{background:rgba(15,122,77,.12);color:var(--ok);border-color:rgba(15,122,77,.3)}
+  #toasts{position:fixed;right:18px;bottom:18px;display:flex;flex-direction:column;
+          gap:9px;z-index:40}
+  .toast{background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--brand);
+         border-radius:11px;padding:11px 15px;box-shadow:0 10px 30px rgba(16,24,40,.14);
+         max-width:370px;animation:tin .22s ease}
+  .toast.bad{border-left-color:var(--bad)} .toast.good{border-left-color:var(--ok)}
+  @keyframes tin{from{opacity:0;transform:translateY(8px)}}
+  .backdrop{position:fixed;inset:0;background:rgba(16,24,40,.45);z-index:30;
+            display:grid;place-items:center;padding:20px;animation:tin .18s ease}
+  .modal{background:var(--panel);border-radius:16px;width:min(680px,100%);
+         max-height:82vh;display:flex;flex-direction:column;overflow:hidden}
+  .modal header{padding:16px 20px;border-bottom:1px solid var(--line);
+                display:flex;align-items:center;gap:12px}
+  .modal header h2{margin:0;font-size:16px}
+  .modal .body{padding:6px 0;overflow:auto}
+  .note{margin:0;padding:12px 20px;color:var(--muted);font-size:12.5px;
+        background:#eef2f8;border-bottom:1px solid var(--line)}
 </style>
 </head>
 <body>
@@ -74,6 +98,9 @@
   </main>
 </div>
 
+<div id="toasts"></div>
+<div id="modalHost"></div>
+
 <script>
 'use strict';
 var API = '/utility-api';
@@ -99,6 +126,44 @@ function esc(v){ return String(v==null?'':v).replace(/[&<>"]/g,function(c){
   return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
 function when(s){ return s ? new Date(s).toLocaleString() : '—'; }
 function kb(n){ return n < 1024 ? n+' B' : n < 1048576 ? (n/1024).toFixed(1)+' KB' : (n/1048576).toFixed(1)+' MB'; }
+
+/* Every action reports its outcome. A silent success is indistinguishable from
+   a silently failed one, and these actions touch customer data. */
+function toast(message, kind){
+  var host = document.getElementById('toasts');
+  var el = document.createElement('div');
+  el.className = 'toast ' + (kind || '');
+  el.textContent = message;
+  host.appendChild(el);
+  setTimeout(function(){
+    el.style.transition = 'opacity .3s'; el.style.opacity = '0';
+    setTimeout(function(){ el.remove(); }, 320);
+  }, kind === 'bad' ? 6500 : 3800);
+}
+
+/* Runs a promise with the button showing a spinner and locked out of a second
+   click, so a slow network cannot be double-submitted. */
+function busy(btn, work, doneMessage){
+  if (btn.disabled) return Promise.resolve();
+  var label = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin"></span>' + esc(btn.dataset.busy || 'Working');
+  return work()
+    .then(function(result){ if (doneMessage) toast(doneMessage, 'good'); return result; })
+    .catch(function(e){ toast(e.message || 'That did not work.', 'bad'); throw e; })
+    .finally(function(){ btn.disabled = false; btn.innerHTML = label; });
+}
+
+function closeModal(){ document.getElementById('modalHost').innerHTML = ''; }
+
+function openModal(title, innerHtml, note){
+  document.getElementById('modalHost').innerHTML =
+    '<div class="backdrop" onclick="if(event.target===this)closeModal()"><div class="modal" role="dialog" aria-modal="true">'
+    + '<header><h2>' + esc(title) + '</h2><span class="sp" style="flex:1"></span>'
+    + '<button class="g" onclick="closeModal()">Close</button></header>'
+    + (note ? '<p class="note">' + esc(note) + '</p>' : '')
+    + '<div class="body" id="modalBody">' + innerHtml + '</div></div></div>';
+}
 
 function showLogin(){ document.getElementById('login').classList.remove('hide');
                       document.getElementById('app').classList.add('hide'); }
@@ -158,15 +223,30 @@ function render(items){
   if (!items.length) { t.innerHTML = '<tr><td style="color:var(--muted)">Nothing to show.</td></tr>'; return; }
   if (tab === 'users') {
     t.innerHTML = '<thead><tr><th>Email</th><th>Name</th><th>Org</th><th>Backups</th>'
-      + '<th>Created</th><th>Last sign-in</th><th></th></tr></thead><tbody>'
+      + '<th>Screen lock</th><th>Last sign-in</th><th></th></tr></thead><tbody>'
       + items.map(function(u){
+        var lock = u.unlockGranted
+          ? '<span class="pill grantpill">Unlock sent</span>'
+              + '<div class="mono">waiting for the app</div>'
+          : u.locked
+            ? '<span class="pill lockpill">Locked</span>'
+                + '<div class="mono">' + when(u.lockedAt) + '</div>'
+            : '<span class="mono">Not set</span>';
+        if (u.restorePending) {
+          lock += '<div class="mono ok">restore queued: ' + esc(u.restorePending) + '</div>';
+        }
+        var unlock = u.locked && !u.unlockGranted
+          ? '<button class="g" data-busy="Sending" onclick="unlockUser(this,\''+u.id+'\',\''+esc(u.email)+'\')">Unlock</button> '
+          : '';
         return '<tr><td>'+esc(u.email)+'<div class="mono">'+esc(u.id)+'</div></td>'
           + '<td><input value="'+esc(u.name)+'" id="n_'+u.id+'" style="width:130px" /></td>'
           + '<td><input value="'+esc(u.org||'')+'" id="o_'+u.id+'" style="width:130px" /></td>'
           + '<td>'+u.backups+'<div class="mono">'+kb(u.backupBytes)+'</div></td>'
-          + '<td>'+when(u.createdAt)+'</td><td>'+when(u.lastLoginAt)+'</td>'
-          + '<td style="white-space:nowrap"><button class="g" onclick="saveUser(\''+u.id+'\')">Save</button> '
-          + '<button class="d" onclick="delUser(\''+u.id+'\',\''+esc(u.email)+'\')">Delete</button></td></tr>';
+          + '<td>'+lock+'</td><td>'+when(u.lastLoginAt)+'</td>'
+          + '<td style="white-space:nowrap">' + unlock
+          + '<button class="g" data-busy="Loading" onclick="openBackups(this,\''+u.id+'\',\''+esc(u.email)+'\')">Backups</button> '
+          + '<button class="g" data-busy="Saving" onclick="saveUser(this,\''+u.id+'\')">Save</button> '
+          + '<button class="d" data-busy="Deleting" onclick="delUser(this,\''+u.id+'\',\''+esc(u.email)+'\')">Delete</button></td></tr>';
       }).join('') + '</tbody>';
   } else if (tab === 'activity') {
     t.innerHTML = '<thead><tr><th>When</th><th>Action</th><th>Detail</th><th>Account</th></tr></thead><tbody>'
@@ -188,25 +268,101 @@ function render(items){
           + '<td>'+esc(f.message)+'</td><td>'+esc(f.email||'—')+'</td><td class="mono">'+esc(f.version||'—')+'</td></tr>';
       }).join('') + '</tbody>';
   } else {
-    t.innerHTML = '<thead><tr><th>When</th><th>User</th><th>File</th><th>Size</th></tr></thead><tbody>'
+    t.innerHTML = '<thead><tr><th>When</th><th>User</th><th>File</th><th>Size</th><th></th></tr></thead><tbody>'
       + items.map(function(b){
         return '<tr><td>'+when(b.at)+'</td><td>'+esc(b.email||'—')+'</td>'
-          + '<td class="mono">'+esc(b.name)+'</td><td>'+kb(b.bytes)+'</td></tr>';
+          + '<td class="mono">'+esc(b.name)+'</td><td>'+kb(b.bytes)+'</td>'
+          + '<td style="white-space:nowrap"><button class="g" data-busy="Preparing" '
+          + 'onclick="downloadBackup(this,\''+b.accountId+'\',\''+esc(b.name)+'\')">Download</button> '
+          + '<button class="p" data-busy="Queuing" onclick="applyBackup(this,\''+b.accountId+'\',\''
+          + esc(b.name)+'\',\''+esc(b.email||'this account')+'\')">Apply</button></td></tr>';
       }).join('') + '</tbody>';
   }
 }
 
-function saveUser(id){
-  api('/v1/admin/users/'+id, {method:'PATCH', body: JSON.stringify({
-    name: document.getElementById('n_'+id).value,
-    org: document.getElementById('o_'+id).value })})
-    .then(function(){ loadTable(); }).catch(function(e){ alert(e.message); });
+function saveUser(btn, id){
+  busy(btn, function(){
+    return api('/v1/admin/users/'+id, {method:'PATCH', body: JSON.stringify({
+      name: document.getElementById('n_'+id).value,
+      org: document.getElementById('o_'+id).value })});
+  }, 'Saved.').then(loadTable, function(){});
 }
-function delUser(id, email){
+
+function delUser(btn, id, email){
   if (!confirm('Delete ' + email + '?\n\nThis removes the account and every backup stored for it. It cannot be undone.')) return;
-  api('/v1/admin/users/'+id, {method:'DELETE'})
-    .then(function(){ loadAll(); }).catch(function(e){ alert(e.message); });
+  busy(btn, function(){ return api('/v1/admin/users/'+id, {method:'DELETE'}); },
+       'Deleted ' + email + '.').then(loadAll, function(){});
 }
+
+function unlockUser(btn, id, email){
+  if (!confirm('Release the screen lock for ' + email + '?\n\n'
+    + 'The passcode is stored on their machine and is never sent here, so this does '
+    + 'not reveal or change it. It permits their app to clear its own lock the next '
+    + 'time it reaches the network.')) return;
+  busy(btn, function(){ return api('/v1/admin/users/'+id+'/unlock', {method:'POST'}); },
+       'Unlock sent. It applies when their app next connects.').then(loadTable, function(){});
+}
+
+/* Bundles are encrypted on the user's machine with a key the server never
+   receives, so this lists and moves sealed blobs. Support can return or replay
+   a customer's data without being able to read it. */
+function openBackups(btn, id, email){
+  busy(btn, function(){ return api('/v1/admin/users/'+id+'/backups'); })
+    .then(function(d){ renderBackups(id, email, d.items || []); }, function(){});
+}
+
+function renderBackups(id, email, items){
+  var rows = !items.length
+    ? '<tr><td style="color:var(--muted);padding:16px 20px">No backups stored for this account.</td></tr>'
+    : items.map(function(b){
+        var actions = b.available
+          ? '<button class="g" data-busy="Preparing" onclick="downloadBackup(this,\''+id+'\',\''+esc(b.name)+'\')">Download</button> '
+            + '<button class="p" data-busy="Queuing" onclick="applyBackup(this,\''+id+'\',\''+esc(b.name)+'\',\''+esc(email)+'\')">Apply</button>'
+          : '<span class="mono bad">no longer on disk</span>';
+        return '<tr><td>'+when(b.at)+'<div class="mono">'+esc(b.name)+'</div></td>'
+          + '<td>'+kb(b.bytes)+'<div class="mono">'+esc(String(b.sha256).slice(0,16))+'…</div></td>'
+          + '<td style="white-space:nowrap">'+actions+'</td></tr>';
+      }).join('');
+  openModal('Backups — ' + email,
+    '<table><thead><tr><th>When</th><th>Size</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>',
+    'These bundles are encrypted on the user’s machine. The server cannot read them, '
+    + 'so a download gives you a sealed file and Apply asks their app to restore it with '
+    + 'their own key on next sync.');
+}
+
+function downloadBackup(btn, id, name){
+  busy(btn, function(){
+    return fetch(API + '/v1/admin/users/'+id+'/backups/'+encodeURIComponent(name),
+                 {credentials:'same-origin'})
+      .then(function(r){
+        if (r.status === 401) { showLogin(); throw new Error('Session expired'); }
+        if (!r.ok) throw new Error('That backup is no longer on disk.');
+        return r.blob();
+      })
+      .then(function(blob){
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url; a.download = name;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(function(){ URL.revokeObjectURL(url); }, 30000);
+      });
+  }, 'Downloaded ' + name + ' (still encrypted).');
+}
+
+function applyBackup(btn, id, name, email){
+  if (!confirm('Apply ' + name + ' to ' + email + '?\n\n'
+    + 'Their app will restore this bundle the next time it syncs, replacing the data '
+    + 'currently on their machine. They keep the only key, so the restore happens there.')) return;
+  busy(btn, function(){
+    return api('/v1/admin/users/'+id+'/restore',
+               {method:'POST', body: JSON.stringify({name: name})});
+  }, 'Queued. Their app will restore it on next sync.')
+    .then(function(){ closeModal(); loadTable(); }, function(){});
+}
+
+document.addEventListener('keydown', function(e){
+  if (e.key === 'Escape') closeModal();
+});
 
 document.addEventListener('keydown', function(e){
   if (e.key === 'Enter' && !document.getElementById('login').classList.contains('hide')) signIn();

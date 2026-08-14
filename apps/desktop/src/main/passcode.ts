@@ -174,6 +174,26 @@ class Passcode {
     return { ok: true }
   }
 
+  /**
+   * Clear the passcode on an administrator's authority, for someone who has
+   * forgotten theirs.
+   *
+   * This is the one path that removes a lock without the code, so it is driven
+   * solely by a grant the server issues against the signed-in account -- never
+   * by anything the person at the keyboard can assert. The caller must confirm
+   * the grant before calling, and confirm back to the server afterwards so it
+   * is spent exactly once.
+   */
+  releaseByGrant(): void {
+    const vault = this.load()
+    if (!vault.hash) return
+    vault.hash = undefined
+    vault.failed = 0
+    vault.lockedUntil = undefined
+    this.persist()
+    this.unlocked = true
+  }
+
   /** Re-lock without quitting, for stepping away from the desk. */
   lock(): void {
     if (this.load().hash) this.unlocked = false

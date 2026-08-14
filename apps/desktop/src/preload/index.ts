@@ -180,7 +180,10 @@ const api = {
       ipcRenderer.invoke('passcode:verify', { code }),
     disable: (code: string): Promise<{ ok: boolean; error?: string }> =>
       ipcRenderer.invoke('passcode:disable', { code }),
-    lock: (): Promise<PasscodeStatus> => ipcRenderer.invoke('passcode:lock')
+    lock: (): Promise<PasscodeStatus> => ipcRenderer.invoke('passcode:lock'),
+    // Kept beside the lock API because both are collected at the lock screen.
+    checkRelease: (): Promise<{ released: boolean }> =>
+      ipcRenderer.invoke('passcode:checkRelease')
   },
   whatsNew: {
     seen: (): Promise<string | null> => ipcRenderer.invoke('whatsnew:seen'),
@@ -219,7 +222,9 @@ const api = {
     listRemote: (): Promise<{ name: string; bytes: number; sha256: string; at: string }[]> =>
       ipcRenderer.invoke('sync:listRemote'),
     restore: (name: string): Promise<{ ok: boolean; detail: string }> =>
-      ipcRenderer.invoke('sync:restore', { name })
+      ipcRenderer.invoke('sync:restore', { name }),
+    applyQueuedRestore: (): Promise<{ applied: boolean; name: string | null }> =>
+      ipcRenderer.invoke('sync:applyQueuedRestore')
   },
   history: {
     list: (options: {

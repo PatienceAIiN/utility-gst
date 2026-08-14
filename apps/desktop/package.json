@@ -1,6 +1,6 @@
 {
   "name": "utility-desktop",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "description": "Utility by Patience AI - GST invoice digitisation",
   "main": "out/main/index.js",
   "author": {

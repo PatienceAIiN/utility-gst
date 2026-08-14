@@ -12,11 +12,15 @@ import { check as checkUpdates, currentState, initUpdater, installNow } from './
 import { baseDir, layoutPreview, outputDir } from './paths'
 import { sidecar } from './sidecar'
 import {
+  applyQueuedRestore,
   backendUrl,
   clearBackupKey,
+  consumeUnlock,
   setBackupKey,
   deriveBackupKey,
   listRemote,
+  lockState,
+  reportLock,
   restoreRemote,
   runBackup,
   serverSignIn,
@@ -367,12 +371,39 @@ function registerIpc(): void {
   // --- screen lock ---
   const Code = z.object({ code: z.string().regex(/^\d{4}$/) })
   ipcMain.handle('passcode:status', () => passcode.status())
-  ipcMain.handle('passcode:set', (_event, raw: unknown) => passcode.set(Code.parse(raw).code))
+  ipcMain.handle('passcode:set', (_event, raw: unknown) => {
+    const result = passcode.set(Code.parse(raw).code)
+    // Tell the server a lock exists so support can release it later. The
+    // passcode is not sent -- only the fact that one is set.
+    if (result.ok) void reportLock(true)
+    return result
+  })
   ipcMain.handle('passcode:verify', (_event, raw: unknown) => passcode.verify(Code.parse(raw).code))
-  ipcMain.handle('passcode:disable', (_event, raw: unknown) => passcode.disable(Code.parse(raw).code))
+  ipcMain.handle('passcode:disable', (_event, raw: unknown) => {
+    const result = passcode.disable(Code.parse(raw).code)
+    if (result.ok) void reportLock(false)
+    return result
+  })
   ipcMain.handle('passcode:lock', () => {
     passcode.lock()
     return passcode.status()
+  })
+
+  /**
+   * Has an administrator released this machine's lock?
+   *
+   * Polled from the lock screen, which is the only place it can help: someone
+   * who has forgotten their passcode cannot get far enough into the app to ask
+   * for anything else. The grant is issued against the signed-in account and is
+   * spent server-side once the lock is actually gone.
+   */
+  ipcMain.handle('passcode:checkRelease', async () => {
+    if (!passcode.status().enabled) return { released: false }
+    const state = await lockState()
+    if (!state.unlockGranted) return { released: false }
+    passcode.releaseByGrant()
+    await consumeUnlock()
+    return { released: true }
   })
 
   /**
@@ -534,6 +565,16 @@ function registerIpc(): void {
   ipcMain.handle('sync:restore', async (_event, raw: unknown) =>
     restoreRemote(z.object({ name: z.string().min(1).max(200) }).parse(raw).name)
   )
+  /**
+   * Pick up a restore an administrator queued for this account.
+   *
+   * The server holds only the sealed bundle; the decryption happens here with
+   * the user's own key, and the queue entry is cleared only once that succeeds.
+   */
+  ipcMain.handle('sync:applyQueuedRestore', async () => {
+    const name = await applyQueuedRestore()
+    return { applied: name !== null, name }
+  })
 
   // --- intranet mesh (off by default) ---
   const DeviceId = z.object({ deviceId: z.string().min(1).max(64) })

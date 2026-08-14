@@ -29,6 +29,7 @@ export default function Lock({
   const [error, setError] = useState<string | null>(null)
   const [shake, setShake] = useState(0)
   const [lockedFor, setLockedFor] = useState(0)
+  const [released, setReleased] = useState(false)
 
   const fail = useCallback((message: string) => {
     setError(message)
@@ -42,6 +43,31 @@ export default function Lock({
     const timer = setInterval(() => setLockedFor((n) => Math.max(0, n - 1)), 1000)
     return () => clearInterval(timer)
   }, [lockedFor])
+
+  /**
+   * Watch for an administrator releasing this lock.
+   *
+   * Someone who has forgotten their passcode cannot reach any other part of the
+   * app, so this screen is the only place a release can be collected. It polls
+   * quietly and does nothing at all offline -- the local lock stands on its own.
+   */
+  useEffect(() => {
+    if (mode !== 'unlock') return
+    let stopped = false
+    const look = async (): Promise<void> => {
+      const { released } = await window.api.passcode.checkRelease()
+      if (released && !stopped) {
+        setReleased(true)
+        setTimeout(() => onUnlocked(''), 1400)
+      }
+    }
+    void look()
+    const timer = setInterval(() => void look(), 15000)
+    return () => {
+      stopped = true
+      clearInterval(timer)
+    }
+  }, [mode, onUnlocked])
 
   const submit = useCallback(
     async (entered: string) => {
@@ -96,8 +122,9 @@ export default function Lock({
     return () => window.removeEventListener('keydown', onKey)
   }, [push, onCancel])
 
-  const title =
-    mode === 'set'
+  const title = released
+    ? 'Lock released'
+    : mode === 'set'
       ? confirming === null
         ? 'Choose a 4-digit passcode'
         : 'Enter it again to confirm'
@@ -125,8 +152,9 @@ export default function Lock({
             borderRadius: '50%',
             display: 'grid',
             placeItems: 'center',
-            bgcolor: 'action.hover',
-            color: 'primary.main',
+            bgcolor: released ? 'success.main' : 'action.hover',
+            color: released ? '#fff' : 'primary.main',
+            transition: 'background-color .3s, color .3s',
             animation: 'rise .45s cubic-bezier(.2,.8,.3,1)',
             '@keyframes rise': {
               from: { transform: 'translateY(8px) scale(.9)', opacity: 0 },
@@ -142,13 +170,15 @@ export default function Lock({
             {title}
           </Typography>
           <Typography variant="caption" color="text.secondary" align="center" sx={{ minHeight: 20 }}>
-            {lockedFor > 0
-              ? `Too many attempts — try again in ${lockedFor}s`
-              : error
-                ? error
-                : mode === 'set'
-                  ? 'Avoid repeated or sequential digits.'
-                  : 'Utility is locked.'}
+            {released
+              ? 'An administrator cleared this passcode. Opening Utility…'
+              : lockedFor > 0
+                ? `Too many attempts — try again in ${lockedFor}s`
+                : error
+                  ? error
+                  : mode === 'set'
+                    ? 'Avoid repeated or sequential digits.'
+                    : 'Utility is locked. Forgotten it? Ask your administrator to release it.'}
           </Typography>
         </Stack>
 

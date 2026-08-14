@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  Box, Button, Container, CssBaseline, Fade, Stack, ThemeProvider, Typography, useMediaQuery
+  Alert, Box, Button, Container, CssBaseline, Fade, Snackbar, Stack, ThemeProvider, Typography,
+  useMediaQuery
 } from '@mui/material'
 import FolderOpenIcon from '@mui/icons-material/FolderOpen'
 import DownloadIcon from '@mui/icons-material/Download'
@@ -58,6 +59,7 @@ export default function App(): JSX.Element {
   const [licencesOpen, setLicencesOpen] = useState(false)
   const [docsOpen, setDocsOpen] = useState(false)
   const [updateReady, setUpdateReady] = useState<string | null>(null)
+  const [restored, setRestored] = useState<string | null>(null)
   const [updated, setUpdated] = useState<string | null>(null)
   const [needSignIn, setNeedSignIn] = useState(false)
   const [aboutOpen, setAboutOpen] = useState(false)
@@ -144,6 +146,20 @@ export default function App(): JSX.Element {
     })
   }, [])
 
+  /**
+   * Collect a restore an administrator queued for this account.
+   *
+   * Runs once the lock is cleared, because the restore rewrites the local data
+   * files and the operator should be past the door before that happens. It is a
+   * no-op when nothing is queued or the machine is offline.
+   */
+  useEffect(() => {
+    if (locked) return
+    void window.api.sync.applyQueuedRestore().then((result) => {
+      if (result.applied) setRestored(result.name)
+    })
+  }, [locked])
+
   if (locked) {
     return (
       <ThemeProvider theme={theme}>
@@ -171,6 +187,19 @@ export default function App(): JSX.Element {
             void window.api.whatsNew.ack()
           }}
         />
+
+        {/* A restore replaces the local data files, so it is never silent. */}
+        <Snackbar
+          open={restored !== null}
+          autoHideDuration={12000}
+          onClose={() => setRestored(null)}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        >
+          <Alert severity="success" onClose={() => setRestored(null)} variant="filled">
+            Your administrator restored a backup ({restored}). Restart Utility to see the
+            restored history and settings.
+          </Alert>
+        </Snackbar>
 
         {/* Slim context bar: just says where you are. Theme and feedback live in
             the menu bar so there is one place to look for an action. */}
