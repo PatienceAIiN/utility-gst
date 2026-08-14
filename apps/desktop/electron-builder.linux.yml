@@ -41,6 +41,11 @@ linux:
       Name: Utility
       Comment: GST invoice digitisation by Patience AI
       Categories: Office;Finance;
+  # Both rpm and deb need the sandbox helper made setuid root after unpacking;
+  # electron-builder does not do it, and Electron will not start without it.
+  afterInstall: build/linux-after-install.sh
+  afterRemove: build/linux-after-remove.sh
+
 deb:
   # Same dependency set as the rpm target; electron-builder does not infer one
   # from the other.
