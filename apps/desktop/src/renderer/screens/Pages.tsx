@@ -15,6 +15,8 @@ import { Section } from '../ui'
  * do with your data -- deliberately no detail of how extraction works.
  */
 
+const CARD = { p: 3, maxWidth: 560, width: '100%', mx: 'auto' } as const
+
 const LICENCES = [
   { name: 'Electron', licence: 'MIT', what: 'Desktop application runtime' },
   { name: 'React', licence: 'MIT', what: 'User interface' },
@@ -180,9 +182,9 @@ export function SettingsScreen({
   const consent = settings?.consent
 
   return (
-    <Box>
+    <Box sx={{ maxWidth: 560, mx: 'auto' }}>
       <Section title="Appearance">
-        <Paper variant="outlined" sx={{ p: 3 }}>
+        <Paper variant="outlined" sx={CARD}>
           <TextField
             select
             size="small"
@@ -217,7 +219,7 @@ export function SettingsScreen({
         title="Where files are saved"
         subtitle="Exported registers and edited spreadsheets go here, organised automatically."
       >
-        <Paper variant="outlined" sx={{ p: 3 }}>
+        <Paper variant="outlined" sx={CARD}>
           <Typography variant="body2" sx={{ wordBreak: 'break-all', mb: 1 }}>
             <strong>{paths?.base ?? '…'}</strong>
           </Typography>
@@ -252,7 +254,7 @@ export function SettingsScreen({
         title="Privacy"
         subtitle="Both are off unless you turn them on. Digital Personal Data Protection Act, 2023."
       >
-        <Paper variant="outlined" sx={{ p: 3 }}>
+        <Paper variant="outlined" sx={CARD}>
           <FormControlLabel
             control={
               <Switch
@@ -305,7 +307,7 @@ export function SettingsScreen({
       </Section>
 
       <Section title="Updates">
-        <Paper variant="outlined" sx={{ p: 3 }}>
+        <Paper variant="outlined" sx={CARD}>
           <Stack direction="row" spacing={2} alignItems="center">
             <SystemUpdateAltIcon fontSize="small" color="disabled" />
             <Typography variant="body2">

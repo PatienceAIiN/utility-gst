@@ -1,8 +1,8 @@
 import { useState, type ReactNode } from 'react'
 import {
-  Alert, Box, Button, Collapse, Dialog, DialogActions, DialogContent, DialogContentText,
-  DialogTitle, Fade, FormControlLabel, LinearProgress, Link, MenuItem, Paper, Stack, Switch,
-  TextField, Typography
+  Alert, Box, Button, CircularProgress, Collapse, Dialog, DialogActions, DialogContent,
+  DialogContentText, DialogTitle, Fade, FormControlLabel, LinearProgress, Link, MenuItem, Paper,
+  Stack, Switch, TextField, Typography
 } from '@mui/material'
 
 /** Shared presentational pieces. No business logic lives here. */
@@ -469,5 +469,56 @@ export function SignInRequiredDialog({
         </Button>
       </DialogActions>
     </Dialog>
+  )
+}
+
+/**
+ * Button that owns its own pending state.
+ *
+ * Callers pass an async handler; the button disables itself and shows a spinner
+ * until it settles. Doing this per-button rather than with a page-level flag
+ * means the operator can see WHICH action is running, and a failure re-enables
+ * only the thing that failed.
+ */
+export function ActionButton({
+  children,
+  onAction,
+  startIcon,
+  variant = 'contained',
+  color,
+  disabled,
+  size,
+  fullWidth
+}: {
+  children: ReactNode
+  onAction: () => void | Promise<void>
+  startIcon?: ReactNode
+  variant?: 'text' | 'outlined' | 'contained'
+  color?: 'primary' | 'error' | 'warning' | 'inherit'
+  disabled?: boolean
+  size?: 'small' | 'medium' | 'large'
+  fullWidth?: boolean
+}): JSX.Element {
+  const [pending, setPending] = useState(false)
+  return (
+    <Button
+      variant={variant}
+      {...(color ? { color } : {})}
+      {...(size ? { size } : {})}
+      {...(fullWidth ? { fullWidth } : {})}
+      disabled={disabled || pending}
+      startIcon={pending ? <CircularProgress size={16} color="inherit" /> : startIcon}
+      onClick={async () => {
+        setPending(true)
+        try {
+          await onAction()
+        } finally {
+          // Guard against setting state after the screen has gone.
+          setPending(false)
+        }
+      }}
+    >
+      {children}
+    </Button>
   )
 }

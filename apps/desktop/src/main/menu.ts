@@ -126,9 +126,7 @@ export function buildMenu(): void {
         { label: 'Check for updates', click: () => send('menu:action', 'check-updates') },
         { type: 'separator' },
         { label: 'Licences', click: () => send('menu:action', 'licences') },
-        { label: `About Utility ${app.getVersion()}`, click: () => send('menu:action', 'about') },
-        { type: 'separator' },
-        { label: 'Toggle light / dark', accelerator: 'CmdOrCtrl+Shift+L', click: () => send('menu:action', 'toggle-theme') }
+        { label: `About Utility ${app.getVersion()}`, click: () => send('menu:action', 'about') }
       ]
     }
   ]

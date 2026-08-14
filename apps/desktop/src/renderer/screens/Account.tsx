@@ -10,7 +10,7 @@ import Visibility from '@mui/icons-material/Visibility'
 import VisibilityOff from '@mui/icons-material/VisibilityOff'
 import DeleteForeverIcon from '@mui/icons-material/DeleteForever'
 import type { AuthStatus, PublicAccount, SyncStatus } from '../../preload/index'
-import { Busy, Section, type ConfirmSpec } from '../ui'
+import { ActionButton, Busy, Section, type ConfirmSpec } from '../ui'
 
 /**
  * Accounts live on this computer. Sign-up, sign-in and profile editing involve
@@ -80,7 +80,7 @@ export default function Account({
   const [status, setStatus] = useState<AuthStatus | null>(null)
   const [sync, setSync] = useState<SyncStatus | null>(null)
   const [tab, setTab] = useState(0)
-  const [busy, setBusy] = useState<string | null>(null)
+  const [busy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [recovery, setRecovery] = useState<string | null>(null)
@@ -123,8 +123,7 @@ export default function Account({
   // ---------- signed out ----------
   if (status && !status.signedIn) {
     const hasAccount = status.hasAccount
-    // With no account yet there is nothing to sign in to, so only offer sign-up.
-    const mode: 'signin' | 'signup' = !hasAccount ? 'signup' : tab === 0 ? 'signin' : 'signup'
+    const mode: 'signin' | 'signup' = tab === 0 ? 'signin' : 'signup'
 
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', pt: 2 }}>
@@ -138,7 +137,7 @@ export default function Account({
           </Typography>
 
           <Paper variant="outlined" sx={CARD}>
-            {hasAccount && (
+            {(
               <Tabs
                 value={tab}
                 onChange={(_e, v: number) => {
@@ -151,6 +150,11 @@ export default function Account({
                 <Tab label="Sign in" />
                 <Tab label="Create account" />
               </Tabs>
+            )}
+            {!hasAccount && mode === 'signin' && (
+              <Alert severity="info" sx={{ mb: 2 }}>
+                No account exists on this computer yet. Create one first.
+              </Alert>
             )}
             <Busy show={busy !== null} label={busy ?? undefined} />
             {error && (
@@ -207,12 +211,11 @@ export default function Account({
                 </>
               )}
 
-              <Button
-                variant="contained"
+              <ActionButton
                 size="large"
-                disabled={busy !== null || !form.email || !form.password}
-                onClick={async () => {
-                  setBusy('Working…')
+                fullWidth
+                disabled={!form.email || !form.password}
+                onAction={async () => {
                   try {
                     if (mode === 'signup') {
                       handle(
@@ -229,12 +232,12 @@ export default function Account({
                       handle(await window.api.auth.signIn(form.email, form.password), 'Signed in.')
                     }
                   } finally {
-                    setBusy(null)
+                    /* ActionButton owns the pending state */
                   }
                 }}
               >
                 {mode === 'signup' ? 'Create account' : 'Sign in'}
-              </Button>
+              </ActionButton>
 
               {mode === 'signin' && (
                 <Button size="small" onClick={() => setForgotOpen(true)}>
@@ -319,14 +322,13 @@ export default function Account({
               value={profile.gstin}
               onChange={(e) => setProfile({ ...profile, gstin: e.target.value })}
             />
-            <Button
-              variant="contained"
-              onClick={async () =>
+            <ActionButton
+              onAction={async () =>
                 handle(await window.api.auth.updateProfile(profile), 'Profile saved.')
               }
             >
               Save profile
-            </Button>
+            </ActionButton>
 
             <Divider />
             <Typography variant="subtitle2">Change password</Typography>
@@ -343,10 +345,11 @@ export default function Account({
               helper="At least 10 characters."
               autoComplete="new-password"
             />
-            <Button
+            <ActionButton
+              variant="outlined"
               startIcon={<LockResetIcon />}
               disabled={!pw.current || !pw.next}
-              onClick={async () => {
+              onAction={async () => {
                 handle(
                   await window.api.auth.changePassword(pw.current, pw.next),
                   'Password changed.'
@@ -355,7 +358,7 @@ export default function Account({
               }}
             >
               Change password
-            </Button>
+            </ActionButton>
           </Stack>
         </Paper>
       </Section>
@@ -399,12 +402,10 @@ export default function Account({
                   />
                 )}
               </Stack>
-              <Button
-                variant="contained"
+              <ActionButton
                 startIcon={<CloudUploadIcon />}
-                disabled={busy !== null || !sync.ready}
-                onClick={async () => {
-                  setBusy('Backing up…')
+                disabled={!sync.ready}
+                onAction={async () => {
                   setError(null)
                   try {
                     const result = await window.api.sync.run()
@@ -417,12 +418,12 @@ export default function Account({
                     else setError(result.reason ?? 'Backup skipped')
                     await refresh()
                   } finally {
-                    setBusy(null)
+                    /* ActionButton owns the pending state */
                   }
                 }}
               >
                 Back up now
-              </Button>
+              </ActionButton>
               {sync.lastBundleAt && (
                 <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 2 }}>
                   Last backup {new Date(sync.lastBundleAt).toLocaleString()}
