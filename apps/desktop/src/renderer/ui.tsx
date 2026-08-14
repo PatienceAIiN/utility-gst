@@ -522,3 +522,73 @@ export function ActionButton({
     </Button>
   )
 }
+
+/**
+ * Release notes, shown exactly once after an update.
+ *
+ * "Seen" is recorded in the main process rather than the renderer, so clearing
+ * browser storage cannot resurrect it and the renderer cannot suppress it. It
+ * appears only when the running version differs from the last acknowledged one,
+ * which means a reinstall of the same version stays quiet.
+ */
+export function WhatsNewBanner({
+  version,
+  onDismiss
+}: {
+  version: string | null
+  onDismiss: () => void
+}): JSX.Element {
+  return (
+    <Collapse in={version !== null}>
+      <Box
+        sx={{
+          px: 3,
+          py: 1.5,
+          borderBottom: 1,
+          borderColor: 'divider',
+          bgcolor: 'action.hover',
+          animation: 'slideDown .35s ease',
+          '@keyframes slideDown': {
+            from: { opacity: 0, transform: 'translateY(-6px)' },
+            to: { opacity: 1, transform: 'none' }
+          }
+        }}
+      >
+        <Stack direction="row" alignItems="center" spacing={1.5} flexWrap="wrap" useFlexGap>
+          <Box
+            sx={{
+              width: 26,
+              height: 26,
+              borderRadius: '50%',
+              display: 'grid',
+              placeItems: 'center',
+              bgcolor: 'success.main',
+              color: '#fff',
+              fontSize: 15,
+              flex: '0 0 auto'
+            }}
+          >
+            ✓
+          </Box>
+          <Box sx={{ flexGrow: 1, minWidth: 200 }}>
+            <Typography variant="body2" fontWeight={620}>
+              Updated to version {version}
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              See what changed in this release.
+            </Typography>
+          </Box>
+          <Button
+            size="small"
+            onClick={() => void window.api.shell.openExternal('https://patienceai.in/utility/')}
+          >
+            What&apos;s new
+          </Button>
+          <Button size="small" variant="contained" onClick={onDismiss}>
+            Got it
+          </Button>
+        </Stack>
+      </Box>
+    </Collapse>
+  )
+}

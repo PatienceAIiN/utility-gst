@@ -44,6 +44,8 @@ export function buildMenu(): void {
           click: () => send('menu:action', 'reveal-output')
         },
         { type: 'separator' },
+        { label: 'Lock now', accelerator: 'CmdOrCtrl+L', click: () => send('menu:action', 'lock') },
+        { type: 'separator' },
         { label: 'Settings', accelerator: 'CmdOrCtrl+,', click: () => send('menu:navigate', 'settings') },
         { type: 'separator' },
         { role: 'quit', label: 'Exit' }

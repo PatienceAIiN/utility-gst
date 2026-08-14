@@ -16,6 +16,7 @@ import {
   SignInRequiredDialog,
   UpdateReadyDialog,
   UpdatedDialog,
+  WhatsNewBanner,
   type ConfirmSpec
 } from './ui'
 import Invoices from './screens/Invoices'
@@ -24,6 +25,7 @@ import Sheets from './screens/Sheets'
 import Account from './screens/Account'
 import Network from './screens/Network'
 import Dashboard, { type Dest } from './screens/Dashboard'
+import Lock from './screens/Lock'
 import { AboutDialog, LicencesDialog, SettingsScreen } from './screens/Pages'
 import Docs from './screens/Docs'
 
@@ -59,6 +61,8 @@ export default function App(): JSX.Element {
   const [updated, setUpdated] = useState<string | null>(null)
   const [needSignIn, setNeedSignIn] = useState(false)
   const [aboutOpen, setAboutOpen] = useState(false)
+  const [locked, setLocked] = useState<boolean | null>(null)
+  const [whatsNew, setWhatsNew] = useState<string | null>(null)
   const [signedIn, setSignedIn] = useState(false)
 
   const prefersDark = useMediaQuery('(prefers-color-scheme: dark)')
@@ -73,6 +77,7 @@ export default function App(): JSX.Element {
   useEffect(() => {
     void window.api.app.info().then(setInfo)
     void window.api.settings.get().then(setSettings)
+    void window.api.passcode.status().then((s) => setLocked(!s.unlocked))
     refreshAuth()
   }, [refreshAuth])
 
@@ -103,6 +108,7 @@ export default function App(): JSX.Element {
             .then(setSettings)
         })
       } else if (action === 'reveal-output') void window.api.paths.reveal()
+      else if (action === 'lock') void window.api.passcode.lock().then(() => setLocked(true))
       else if (action === 'docs') setDocsOpen(true)
       else if (action === 'about') setAboutOpen(true)
       else if (action === 'licences') setLicencesOpen(true)
@@ -123,12 +129,13 @@ export default function App(): JSX.Element {
 
   useEffect(() => {
     if (!info) return
-    // "Updated" is decided by comparing the running version against the last one
-    // seen, so it appears exactly once after an update actually applied.
-    const key = 'utility.lastSeenVersion'
-    const previous = localStorage.getItem(key)
-    if (previous && previous !== info.version) setUpdated(info.version)
-    localStorage.setItem(key, info.version)
+    // Shown once per version. The acknowledged version lives in the main
+    // process, so clearing renderer storage cannot make it reappear and a
+    // reinstall of the same version stays quiet.
+    void window.api.whatsNew.seen().then((seen) => {
+      if (seen && seen !== info.version) setWhatsNew(info.version)
+      else if (!seen) void window.api.whatsNew.ack()
+    })
   }, [info])
 
   useEffect(() => {
@@ -136,6 +143,15 @@ export default function App(): JSX.Element {
       if (state.status === 'ready') setUpdateReady(state.version)
     })
   }, [])
+
+  if (locked) {
+    return (
+      <ThemeProvider theme={theme}>
+        <CssBaseline />
+        <Lock onUnlocked={() => setLocked(false)} />
+      </ThemeProvider>
+    )
+  }
 
   return (
     <ThemeProvider theme={theme}>
@@ -148,6 +164,14 @@ export default function App(): JSX.Element {
           bgcolor: 'background.default'
         }}
       >
+        <WhatsNewBanner
+          version={whatsNew}
+          onDismiss={() => {
+            setWhatsNew(null)
+            void window.api.whatsNew.ack()
+          }}
+        />
+
         {/* Slim context bar: just says where you are. Theme and feedback live in
             the menu bar so there is one place to look for an action. */}
         <Stack

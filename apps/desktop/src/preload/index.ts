@@ -110,6 +110,13 @@ export interface SyncOutcome {
   path?: string
 }
 
+export interface PasscodeStatus {
+  enabled: boolean
+  unlocked: boolean
+  lockedForSeconds: number
+  attemptsLeft: number
+}
+
 export type Permission = 'view' | 'read' | 'write'
 export interface MeshPeer {
   deviceId: string
@@ -162,6 +169,22 @@ const api = {
   },
   app: {
     info: (): Promise<AppInfo> => ipcRenderer.invoke('app:info')
+  },
+  passcode: {
+    status: (): Promise<PasscodeStatus> => ipcRenderer.invoke('passcode:status'),
+    set: (code: string): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('passcode:set', { code }),
+    verify: (
+      code: string
+    ): Promise<{ ok: boolean; error?: string; lockedForSeconds?: number }> =>
+      ipcRenderer.invoke('passcode:verify', { code }),
+    disable: (code: string): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('passcode:disable', { code }),
+    lock: (): Promise<PasscodeStatus> => ipcRenderer.invoke('passcode:lock')
+  },
+  whatsNew: {
+    seen: (): Promise<string | null> => ipcRenderer.invoke('whatsnew:seen'),
+    ack: (): Promise<boolean> => ipcRenderer.invoke('whatsnew:ack')
   },
   auth: {
     status: (): Promise<AuthStatus> => ipcRenderer.invoke('auth:status'),

@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { auth } from './auth'
 import { history } from './history'
 import { buildMenu } from './menu'
+import { passcode } from './passcode'
 import { flushOutbox, installCrashHandlers, reportError, sendFeedback } from './telemetry'
 import { mesh, type Permission } from './mesh'
 import { check as checkUpdates, currentState, initUpdater, installNow } from './updater'
@@ -361,6 +362,28 @@ function registerIpc(): void {
     })
     history.recordExport([record.id], exported.path)
     return exported
+  })
+
+  // --- screen lock ---
+  const Code = z.object({ code: z.string().regex(/^\d{4}$/) })
+  ipcMain.handle('passcode:status', () => passcode.status())
+  ipcMain.handle('passcode:set', (_event, raw: unknown) => passcode.set(Code.parse(raw).code))
+  ipcMain.handle('passcode:verify', (_event, raw: unknown) => passcode.verify(Code.parse(raw).code))
+  ipcMain.handle('passcode:disable', (_event, raw: unknown) => passcode.disable(Code.parse(raw).code))
+  ipcMain.handle('passcode:lock', () => {
+    passcode.lock()
+    return passcode.status()
+  })
+
+  /**
+   * Which version the operator has already been shown release notes for.
+   * Kept in main rather than localStorage so it survives a cache clear and
+   * cannot be reset by the renderer.
+   */
+  ipcMain.handle('whatsnew:seen', () => store.get().lastSeenVersion ?? null)
+  ipcMain.handle('whatsnew:ack', () => {
+    store.patch({ lastSeenVersion: app.getVersion() })
+    return true
   })
 
   // --- accounts (entirely local unless cloud backup is switched on) ---

@@ -5,10 +5,12 @@ import {
   TextField, Typography
 } from '@mui/material'
 import CloudSyncIcon from '@mui/icons-material/CloudSync'
+import LockOutlinedIcon from '@mui/icons-material/LockOutlined'
 import FolderOpenIcon from '@mui/icons-material/FolderOpen'
 import SystemUpdateAltIcon from '@mui/icons-material/SystemUpdateAlt'
 import type { AppInfo, PathsInfo, Settings as SettingsShape } from '../../preload/index'
 import { Section } from '../ui'
+import Lock from './Lock'
 
 /**
  * About and Settings. These describe what the product does and what it will not
@@ -169,6 +171,9 @@ export function SettingsScreen({
 }): JSX.Element {
   const [update, setUpdate] = useState<import('../../preload/index').UpdateState | null>(null)
   const [paths, setPaths] = useState<PathsInfo | null>(null)
+  const [lockOn, setLockOn] = useState(false)
+  const [capture, setCapture] = useState<'set' | 'disable' | null>(null)
+  const [lockMsg, setLockMsg] = useState<string | null>(null)
 
 
   useEffect(() => {
@@ -177,6 +182,7 @@ export function SettingsScreen({
   }, [info.version])
   useEffect(() => {
     void window.api.paths.info().then(setPaths)
+    void window.api.passcode.status().then((s) => setLockOn(s.enabled))
   }, [])
 
   const consent = settings?.consent
@@ -247,6 +253,50 @@ export function SettingsScreen({
             The folder is created the first time something is saved. Exports never overwrite an
             existing file — each one is written with its own timestamp.
           </Typography>
+        </Paper>
+      </Section>
+
+      <Section
+        title="Screen lock"
+        subtitle="Ask for a 4-digit passcode each time Utility opens."
+      >
+        <Paper variant="outlined" sx={CARD}>
+          <FormControlLabel
+            control={
+              <Switch
+                checked={lockOn}
+                onChange={(e) => {
+                  setLockMsg(null)
+                  setCapture(e.target.checked ? 'set' : 'disable')
+                }}
+              />
+            }
+            label={
+              <Stack direction="row" spacing={1} alignItems="center">
+                <LockOutlinedIcon fontSize="small" />
+                <span>Require a passcode</span>
+              </Stack>
+            }
+          />
+          {lockMsg && (
+            <Alert
+              severity={/not right|Could not|Avoid|four digits/i.test(lockMsg) ? 'error' : 'success'}
+              sx={{ mt: 1.5 }}
+              onClose={() => setLockMsg(null)}
+            >
+              {lockMsg}
+            </Alert>
+          )}
+          <Alert severity="info" sx={{ mt: 2 }}>
+            This stops someone opening Utility on an unattended machine. It is not encryption —
+            four digits is a small number of combinations, and it will not stop someone with
+            access to the disk. Wrong attempts are slowed and then locked out.
+          </Alert>
+          {lockOn && (
+            <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1.5 }}>
+              Lock straight away from File → Lock now (Ctrl+L).
+            </Typography>
+          )}
         </Paper>
       </Section>
 
@@ -365,6 +415,33 @@ export function SettingsScreen({
           </Typography>
         </Paper>
       </Section>
+
+      {capture && (
+        <Lock
+          mode={capture === 'set' ? 'set' : 'unlock'}
+          onCancel={() => setCapture(null)}
+          onUnlocked={async (code) => {
+            if (capture === 'set') {
+              const result = await window.api.passcode.set(code)
+              if (result.ok) {
+                setLockOn(true)
+                setLockMsg('Passcode set. It will be asked for next time Utility opens.')
+              } else {
+                setLockMsg(result.error ?? 'Could not set the passcode.')
+              }
+            } else {
+              const result = await window.api.passcode.disable(code)
+              if (result.ok) {
+                setLockOn(false)
+                setLockMsg('Passcode removed.')
+              } else {
+                setLockMsg(result.error ?? 'That code is not right.')
+              }
+            }
+            setCapture(null)
+          }}
+        />
+      )}
     </Box>
   )
 }

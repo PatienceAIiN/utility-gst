@@ -21,6 +21,8 @@ export interface Settings {
     noticeVersion: number
   } | undefined
   confirmOnExit: boolean
+  /** Version whose release notes have already been shown. */
+  lastSeenVersion?: string | undefined
   /** Where generated files go. Unset means the managed default (see paths.ts). */
   downloadDir?: string | undefined
   lastExportDir?: string | undefined
@@ -66,6 +68,7 @@ class Store {
       ...(update.theme !== undefined ? { theme: update.theme } : {}),
       ...(update.confirmOnExit !== undefined ? { confirmOnExit: update.confirmOnExit } : {}),
       ...('consent' in update ? { consent: update.consent } : {}),
+      ...('lastSeenVersion' in update ? { lastSeenVersion: update.lastSeenVersion } : {}),
       ...('downloadDir' in update ? { downloadDir: update.downloadDir } : {}),
       ...('lastExportDir' in update ? { lastExportDir: update.lastExportDir } : {})
     }
