@@ -209,12 +209,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Separate runners per architecture: PyInstaller cannot cross-compile,
-          # so the sidecar must be frozen on the architecture it will run on.
-          - runner: macos-14   # Apple Silicon
+          # Apple Silicon only. Intel runners (macos-13) sat queued indefinitely
+          # on this account, and because the release job waits for the whole
+          # matrix that blocked the Windows and Linux packages from publishing
+          # too -- a scarce runner for a shrinking platform holding up every
+          # other one. Every Mac sold since 2020 is arm64.
+          #
+          # PyInstaller cannot cross-compile, so re-adding Intel means another
+          # runner, not another flag.
+          - runner: macos-14
             arch: arm64
-          - runner: macos-13   # Intel
-            arch: x64
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -272,13 +276,6 @@ jobs:
             sleep 20
           done
           exit 1
-
-      - name: Drop the update manifest on Intel
-        if: matrix.arch == 'x64'
-        # Both architectures emit latest-mac.yml, and a Release cannot hold two
-        # assets with the same name. The updater follows Apple Silicon; Intel is
-        # a direct download.
-        run: rm -f release/mac/latest-mac.yml
 
       - uses: actions/upload-artifact@v4
         with:
