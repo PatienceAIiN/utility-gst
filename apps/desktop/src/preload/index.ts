@@ -224,7 +224,14 @@ const api = {
     restore: (name: string): Promise<{ ok: boolean; detail: string }> =>
       ipcRenderer.invoke('sync:restore', { name }),
     applyQueuedRestore: (): Promise<{ applied: boolean; name: string | null }> =>
-      ipcRenderer.invoke('sync:applyQueuedRestore')
+      ipcRenderer.invoke('sync:applyQueuedRestore'),
+    accountState: (): Promise<{ suspended: boolean; mustChangePassword: boolean }> =>
+      ipcRenderer.invoke('sync:accountState'),
+    changePassword: (
+      current: string,
+      replacement: string
+    ): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('sync:changePassword', { current, replacement })
   },
   history: {
     list: (options: {

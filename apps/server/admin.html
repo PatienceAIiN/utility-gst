@@ -225,19 +225,36 @@ function render(items){
     t.innerHTML = '<thead><tr><th>Email</th><th>Name</th><th>Org</th><th>Backups</th>'
       + '<th>Screen lock</th><th>Last sign-in</th><th></th></tr></thead><tbody>'
       + items.map(function(u){
-        var lock = u.unlockGranted
-          ? '<span class="pill grantpill">Unlock sent</span>'
-              + '<div class="mono">waiting for the app</div>'
-          : u.locked
-            ? '<span class="pill lockpill">Locked</span>'
-                + '<div class="mono">' + when(u.lockedAt) + '</div>'
-            : '<span class="mono">Not set</span>';
+        /* Two independent states. A suspension is ours and takes effect at
+           once; a passcode is theirs and can only be released. */
+        var lock = '';
+        if (u.suspended) {
+          lock += '<span class="pill bad" style="border-color:rgba(179,38,30,.35)">Portal locked</span>'
+                + '<div class="mono">' + when(u.suspendedAt) + '</div>';
+        }
+        if (u.unlockGranted) {
+          lock += '<div><span class="pill grantpill">Unlock sent</span></div>'
+                + '<div class="mono">waiting for their app</div>';
+        } else if (u.locked) {
+          lock += '<div><span class="pill lockpill">Passcode set</span></div>'
+                + '<div class="mono">' + when(u.lockedAt) + '</div>';
+        }
+        if (u.mustChangePassword) {
+          lock += '<div class="mono warn">temporary password — must change</div>';
+        }
         if (u.restorePending) {
           lock += '<div class="mono ok">restore queued: ' + esc(u.restorePending) + '</div>';
         }
-        var unlock = u.locked && !u.unlockGranted
-          ? '<button class="g" data-busy="Sending" onclick="unlockUser(this,\''+u.id+'\',\''+esc(u.email)+'\')">Unlock</button> '
-          : '';
+        if (!lock) lock = '<span class="mono">Open</span>';
+
+        var canUnlock = (u.locked && !u.unlockGranted) || u.suspended;
+        var unlock = (u.suspended
+            ? ''
+            : '<button class="g" data-busy="Locking" onclick="lockUser(this,\''+u.id+'\',\''+esc(u.email)+'\')">Lock</button> ')
+          + (canUnlock
+            ? '<button class="p" data-busy="Unlocking" onclick="unlockUser(this,\''+u.id+'\',\''+esc(u.email)+'\')">Unlock</button> '
+            : '')
+          + '<button class="g" data-busy="Resetting" onclick="resetUser(this,\''+u.id+'\',\''+esc(u.email)+'\')">Reset</button> ';
         return '<tr><td>'+esc(u.email)+'<div class="mono">'+esc(u.id)+'</div></td>'
           + '<td><input value="'+esc(u.name)+'" id="n_'+u.id+'" style="width:130px" /></td>'
           + '<td><input value="'+esc(u.org||'')+'" id="o_'+u.id+'" style="width:130px" /></td>'
@@ -294,13 +311,37 @@ function delUser(btn, id, email){
        'Deleted ' + email + '.').then(loadAll, function(){});
 }
 
+function lockUser(btn, id, email){
+  if (!confirm('Lock the portal for ' + email + '?\n\n'
+    + 'They will be signed out immediately and cannot use Utility until you unlock it. '
+    + 'Their invoices, history and backups are not touched.')) return;
+  busy(btn, function(){ return api('/v1/admin/users/'+id+'/lock', {method:'POST'}); },
+       'Portal locked. They are signed out now.').then(loadTable, function(){});
+}
+
 function unlockUser(btn, id, email){
-  if (!confirm('Release the screen lock for ' + email + '?\n\n'
-    + 'The passcode is stored on their machine and is never sent here, so this does '
-    + 'not reveal or change it. It permits their app to clear its own lock the next '
-    + 'time it reaches the network.')) return;
+  if (!confirm('Unlock ' + email + '?\n\n'
+    + 'This lifts the portal lock and clears any passcode on their machine, leaving the '
+    + 'account passcode-free. They can set a new passcode afterwards if they want one.\n\n'
+    + 'The passcode itself is stored on their machine and never sent here, so this does '
+    + 'not reveal it — their app clears it the next time it reaches the network.')) return;
   busy(btn, function(){ return api('/v1/admin/users/'+id+'/unlock', {method:'POST'}); },
-       'Unlock sent. It applies when their app next connects.').then(loadTable, function(){});
+       'Unlocked. Any passcode clears when their app next connects.')
+    .then(loadTable, function(){});
+}
+
+function resetUser(btn, id, email){
+  if (!confirm('Reset ' + email + '?\n\n'
+    + 'Use this when they are locked out completely — passcode forgotten, password '
+    + 'forgotten, or both.\n\n'
+    + 'It clears every lock, ends all their sessions, and emails them a one-time '
+    + 'password they must change when they sign in.\n\n'
+    + 'Their invoices, history and backups are NOT deleted.')) return;
+  busy(btn, function(){ return api('/v1/admin/users/'+id+'/reset', {method:'POST'}); })
+    .then(function(d){
+      toast('Reset done. A temporary password was emailed to ' + (d.emailed || email) + '.', 'good');
+      loadTable();
+    }, function(){});
 }
 
 /* Bundles are encrypted on the user's machine with a key the server never

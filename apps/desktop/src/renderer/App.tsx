@@ -17,6 +17,8 @@ import {
   SignInRequiredDialog,
   UpdateReadyDialog,
   UpdatedDialog,
+  ForcePasswordChange,
+  SuspendedScreen,
   WhatsNewBanner,
   type ConfirmSpec
 } from './ui'
@@ -60,6 +62,8 @@ export default function App(): JSX.Element {
   const [docsOpen, setDocsOpen] = useState(false)
   const [updateReady, setUpdateReady] = useState<string | null>(null)
   const [restored, setRestored] = useState<string | null>(null)
+  const [suspended, setSuspended] = useState(false)
+  const [mustChangePassword, setMustChangePassword] = useState(false)
   const [updated, setUpdated] = useState<string | null>(null)
   const [needSignIn, setNeedSignIn] = useState(false)
   const [aboutOpen, setAboutOpen] = useState(false)
@@ -160,11 +164,42 @@ export default function App(): JSX.Element {
     })
   }, [locked])
 
+  /**
+   * Account state the server owns: a suspension, or a temporary password that
+   * has to be replaced. Re-checked periodically so a lock lifts, or takes
+   * effect, without the operator restarting. Offline it reports neither, which
+   * keeps an unreachable server from locking an offline-first app.
+   */
+  const refreshAccountState = useCallback(() => {
+    return window.api.sync.accountState().then((state) => {
+      setSuspended(state.suspended)
+      setMustChangePassword(state.mustChangePassword)
+    })
+  }, [])
+
+  useEffect(() => {
+    if (locked) return
+    void refreshAccountState()
+    const timer = setInterval(() => void refreshAccountState(), 60000)
+    return () => clearInterval(timer)
+  }, [locked, refreshAccountState])
+
   if (locked) {
     return (
       <ThemeProvider theme={theme}>
         <CssBaseline />
         <Lock onUnlocked={() => setLocked(false)} />
+      </ThemeProvider>
+    )
+  }
+
+  // A suspension covers everything; a forced password change sits on top of the
+  // app so the rest stays visible behind it and the reason is obvious.
+  if (suspended) {
+    return (
+      <ThemeProvider theme={theme}>
+        <CssBaseline />
+        <SuspendedScreen onRecheck={() => refreshAccountState()} />
       </ThemeProvider>
     )
   }
@@ -180,6 +215,10 @@ export default function App(): JSX.Element {
           bgcolor: 'background.default'
         }}
       >
+        {mustChangePassword && (
+          <ForcePasswordChange onDone={() => setMustChangePassword(false)} />
+        )}
+
         <WhatsNewBanner
           version={whatsNew}
           onDismiss={() => {

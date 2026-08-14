@@ -52,7 +52,7 @@ export function setServerToken(token: string | null): void {
 
 /** Sign in (or register) against the configured server. Local auth is unaffected. */
 export async function serverSignIn(email: string, password: string, name: string): Promise<
-  { ok: true } | { ok: false; error: string }
+  { ok: true; mustChangePassword: boolean } | { ok: false; error: string; locked?: boolean }
 > {
   const url = endpoint()
   if (!url) return { ok: false, error: 'No server configured.' }
@@ -72,11 +72,18 @@ export async function serverSignIn(email: string, password: string, name: string
     }
     if (!response.ok) {
       const detail = (await response.json().catch(() => ({}))) as { error?: string }
-      return { ok: false, error: detail.error ?? `Server returned ${response.status}` }
+      // 423 Locked: the credentials are right but an administrator has
+      // suspended the account, which is worth saying rather than reporting as
+      // a failed sign-in the user would keep retrying.
+      return {
+        ok: false,
+        error: detail.error ?? `Server returned ${response.status}`,
+        locked: response.status === 423
+      }
     }
-    const data = (await response.json()) as { token: string }
+    const data = (await response.json()) as { token: string; mustChangePassword?: boolean }
     serverToken = data.token
-    return { ok: true }
+    return { ok: true, mustChangePassword: !!data.mustChangePassword }
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : 'Could not reach the server.' }
   }
@@ -124,24 +131,80 @@ export async function reportLock(locked: boolean): Promise<void> {
   }
 }
 
+/**
+ * Replace the account password, proving the current one.
+ *
+ * Also the way out of an administrator's reset: the emailed password is
+ * one-time, and the server stops accepting it the moment a real one is chosen.
+ * The backup key is derived from the password, so it is re-derived here --
+ * otherwise the next backup would be encrypted under a key that no longer
+ * matches what a restore would derive.
+ */
+export async function changePassword(
+  current: string,
+  replacement: string
+): Promise<{ ok: boolean; error?: string }> {
+  const url = endpoint()
+  if (!url || !serverToken) return { ok: false, error: 'Sign in to the server first.' }
+  try {
+    const response = await fetch(`${url.replace(/\/$/, '')}/v1/auth/password`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${serverToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ current, replacement }),
+      signal: AbortSignal.timeout(20000)
+    })
+    const data = (await response.json().catch(() => ({}))) as {
+      error?: string
+      token?: string
+    }
+    if (!response.ok) return { ok: false, error: data.error ?? `Server returned ${response.status}` }
+    // The change revokes every session; the replacement it hands back keeps
+    // this one alive rather than dropping the person who just changed it.
+    if (data.token) serverToken = data.token
+    setBackupKey(deriveBackupKey(replacement))
+    return { ok: true }
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : 'Could not reach the server.'
+    }
+  }
+}
+
 export interface RemoteLockState {
   unlockGranted: boolean
   restoreName: string | null
+  suspended: boolean
+  mustChangePassword: boolean
+}
+
+const NO_LOCK_STATE: RemoteLockState = {
+  unlockGranted: false,
+  restoreName: null,
+  suspended: false,
+  mustChangePassword: false
 }
 
 export async function lockState(): Promise<RemoteLockState> {
   const url = endpoint()
-  if (!url || !serverToken) return { unlockGranted: false, restoreName: null }
+  if (!url || !serverToken) return NO_LOCK_STATE
   try {
     const response = await fetch(`${url.replace(/\/$/, '')}/v1/lock`, {
       headers: { authorization: `Bearer ${serverToken}` },
       signal: AbortSignal.timeout(10000)
     })
-    if (!response.ok) return { unlockGranted: false, restoreName: null }
-    const data = (await response.json()) as RemoteLockState
-    return { unlockGranted: !!data.unlockGranted, restoreName: data.restoreName ?? null }
+    if (!response.ok) return NO_LOCK_STATE
+    const data = (await response.json()) as Partial<RemoteLockState>
+    return {
+      unlockGranted: !!data.unlockGranted,
+      restoreName: data.restoreName ?? null,
+      suspended: !!data.suspended,
+      mustChangePassword: !!data.mustChangePassword
+    }
   } catch {
-    return { unlockGranted: false, restoreName: null }
+    // Offline. Never infer a suspension from an unreachable server -- that
+    // would lock a working offline-first app out of its own local data.
+    return NO_LOCK_STATE
   }
 }
 

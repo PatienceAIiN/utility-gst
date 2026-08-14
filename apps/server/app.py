@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import uuid
+from html import escape
 import hmac
 import os
 import secrets
@@ -139,6 +140,13 @@ ALTER TABLE accounts ADD COLUMN IF NOT EXISTS locked        boolean NOT NULL DEF
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS locked_at     timestamptz;
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS unlock_grant  timestamptz;
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS restore_name  text;
+
+-- An administrator can suspend the portal outright. This is separate from the
+-- user's own passcode: suspension is enforced server-side and cannot be cleared
+-- from the machine, whereas a passcode is local and merely released.
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS suspended     boolean NOT NULL DEFAULT false;
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS suspended_at  timestamptz;
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS must_change_password boolean NOT NULL DEFAULT false;
 """
 
 
@@ -186,7 +194,13 @@ def issue_token(account_id: str) -> dict[str, str]:
     return {"token": token, "expires_at": (now() + TOKEN_TTL).isoformat()}
 
 
-def current_account(authorization: Annotated[str | None, Header()] = None) -> str:
+def account_from_token(authorization: str | None) -> str:
+    """Resolve the bearer token, ignoring suspension.
+
+    Used by the few endpoints a suspended account must still reach -- chiefly
+    the lock poll, without which the app could never learn it had been let back
+    in and the suspension would be permanent.
+    """
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(401, "Sign in required.")
     token = authorization.split(" ", 1)[1].strip()
@@ -197,6 +211,22 @@ def current_account(authorization: Annotated[str | None, Header()] = None) -> st
     if not row:
         raise HTTPException(401, "Session expired. Sign in again.")
     return str(row[0])
+
+
+def current_account_any(authorization: Annotated[str | None, Header()] = None) -> str:
+    return account_from_token(authorization)
+
+
+def current_account(authorization: Annotated[str | None, Header()] = None) -> str:
+    account_id = account_from_token(authorization)
+    with db() as conn:
+        row = conn.execute(
+            "SELECT suspended FROM accounts WHERE id = %s", (account_id,)
+        ).fetchone()
+    if row and row[0]:
+        # 423 Locked: the credentials are valid, the account is not usable.
+        raise HTTPException(423, "This account has been locked by your administrator.")
+    return account_id
 
 
 @app.get("/healthz")
@@ -230,15 +260,59 @@ def login(body: SignIn, request: Request) -> dict[str, object]:
     rate_limit(f"login:{body.email.lower()}", limit=10, window_seconds=900)
     with db() as conn:
         row = conn.execute(
-            "SELECT id, password_hash, name FROM accounts WHERE email = %s", (body.email.lower(),)
+            "SELECT id, password_hash, name, suspended, must_change_password FROM accounts"
+            " WHERE email = %s",
+            (body.email.lower(),),
         ).fetchone()
     if not row or not verify_password(body.password, row[1]):
         raise HTTPException(401, "That email or password is not right.")
+    if row[3]:
+        raise HTTPException(423, "This account has been locked by your administrator.")
     account_id = str(row[0])
     with db() as conn:
         conn.execute("UPDATE accounts SET last_login_at = %s WHERE id = %s", (now(), account_id))
     log(account_id, "login")
-    return {"account": {"id": account_id, "email": body.email, "name": row[2]}, **issue_token(account_id)}
+    return {
+        "account": {"id": account_id, "email": body.email, "name": row[2]},
+        # After an administrator reset the password in play is a one-time one,
+        # so the app must collect a replacement before going any further.
+        "mustChangePassword": row[4],
+        **issue_token(account_id),
+    }
+
+
+class PasswordChange(BaseModel):
+    current: str = Field(min_length=1, max_length=1024)
+    replacement: str = Field(min_length=10, max_length=1024)
+
+
+@app.post("/v1/auth/password")
+def change_password(
+    body: PasswordChange, account_id: Annotated[str, Depends(current_account)]
+) -> dict[str, object]:  # returns a fresh token alongside the flag
+    """Set a new password, proving the current one first.
+
+    Also the exit from a temporary password: clearing the flag here means the
+    one-time password stops being accepted the moment a real one is chosen.
+    """
+    with db() as conn:
+        row = conn.execute(
+            "SELECT password_hash FROM accounts WHERE id = %s", (account_id,)
+        ).fetchone()
+        if not row or not verify_password(body.current, row[0]):
+            raise HTTPException(401, "That current password is not right.")
+        if verify_password(body.replacement, row[0]):
+            raise HTTPException(400, "Choose a password you have not just used.")
+        conn.execute(
+            "UPDATE accounts SET password_hash = %s, must_change_password = false WHERE id = %s",
+            (hash_password(body.replacement), account_id),
+        )
+        # Every existing session is signed out: a password change is how someone
+        # responds to a password they no longer trust. A fresh token is issued
+        # below so the person doing it is not the one thrown out.
+        conn.execute("DELETE FROM tokens WHERE account_id = %s", (account_id,))
+    log(account_id, "password_changed")
+    return {"ok": True, **issue_token(account_id)}
 
 
 # --- backups ----------------------------------------------------------------
@@ -326,16 +400,27 @@ def report_lock(
 
 
 @app.get("/v1/lock")
-def lock_status(account_id: Annotated[str, Depends(current_account)]) -> dict[str, object]:
-    """Polled by the lock screen so an admin release can take effect."""
+def lock_status(account_id: Annotated[str, Depends(current_account_any)]) -> dict[str, object]:
+    """Polled by the app so an admin release -- or suspension -- takes effect.
+
+    Deliberately reachable while suspended. If this were blocked too, an account
+    could never observe being unlocked and the suspension would be permanent.
+    """
     with db() as conn:
         row = conn.execute(
-            "SELECT locked, unlock_grant, restore_name FROM accounts WHERE id = %s",
+            "SELECT locked, unlock_grant, restore_name, suspended, must_change_password"
+            " FROM accounts WHERE id = %s",
             (account_id,),
         ).fetchone()
     if not row:
         raise HTTPException(404, "No such account.")
-    return {"locked": row[0], "unlockGranted": row[1] is not None, "restoreName": row[2]}
+    return {
+        "locked": row[0],
+        "unlockGranted": row[1] is not None,
+        "restoreName": row[2],
+        "suspended": row[3],
+        "mustChangePassword": row[4],
+    }
 
 
 @app.post("/v1/lock/consume")
@@ -584,7 +669,8 @@ def admin_users(request: Request, q: str = "", limit: int = 100) -> dict[str, ob
             "SELECT a.id, a.email, a.name, a.org, a.gstin, a.created_at, a.last_login_at,"
             " (SELECT count(*) FROM backups b WHERE b.account_id = a.id),"
             " (SELECT coalesce(sum(b.bytes),0) FROM backups b WHERE b.account_id = a.id),"
-            " a.locked, a.locked_at, a.unlock_grant, a.restore_name"
+            " a.locked, a.locked_at, a.unlock_grant, a.restore_name,"
+            " a.suspended, a.suspended_at, a.must_change_password"
             " FROM accounts a"
             " WHERE (%s = '' OR lower(a.email) LIKE %s OR lower(a.name) LIKE %s)"
             " ORDER BY a.created_at DESC LIMIT %s",
@@ -598,6 +684,8 @@ def admin_users(request: Request, q: str = "", limit: int = 100) -> dict[str, ob
                 "backups": r[7], "backupBytes": int(r[8]),
                 "locked": r[9], "lockedAt": r[10].isoformat() if r[10] else None,
                 "unlockGranted": r[11] is not None, "restorePending": r[12],
+                "suspended": r[13], "suspendedAt": r[14].isoformat() if r[14] else None,
+                "mustChangePassword": r[15],
             }
             for r in rows
         ]
@@ -641,25 +729,149 @@ def admin_delete_user(user_id: str, request: Request) -> dict[str, bool]:
     return {"ok": True}
 
 
-@app.post("/v1/admin/users/{user_id}/unlock")
-def admin_unlock_user(user_id: str, request: Request) -> dict[str, bool]:
-    """Release a screen lock the user set on their own machine.
+@app.post("/v1/admin/users/{user_id}/lock")
+def admin_lock_user(user_id: str, request: Request) -> dict[str, bool]:
+    """Suspend the portal for an account.
 
-    This does not reveal or change the passcode -- the server has never held it.
-    It records permission for that account's app to clear its own lock the next
-    time it can reach the network, and the app confirms once it has.
+    Enforced here rather than on the machine, so it holds even if the user
+    reinstalls, and it does not involve setting a passcode on their behalf --
+    an administrator should never hold a credential the user types.
     """
     admin_guard(request)
     user_id = account_id_or_404(user_id)
     with db() as conn:
-        row = conn.execute("SELECT locked FROM accounts WHERE id = %s", (user_id,)).fetchone()
+        updated = conn.execute(
+            "UPDATE accounts SET suspended = true, suspended_at = now() WHERE id = %s",
+            (user_id,),
+        ).rowcount
+        if not updated:
+            raise HTTPException(404, "No such account.")
+        # Existing sessions end immediately; a suspension that waited for a
+        # token to expire would not be a suspension.
+        conn.execute("DELETE FROM tokens WHERE account_id = %s", (user_id,))
+    log(user_id, "admin_portal_locked")
+    return {"ok": True}
+
+
+@app.post("/v1/admin/users/{user_id}/unlock")
+def admin_unlock_user(user_id: str, request: Request) -> dict[str, bool]:
+    """Lift both kinds of lock, leaving the account passcode-free.
+
+    A suspension is cleared here and now. A passcode cannot be -- the server has
+    never held it -- so this records permission for that account's app to clear
+    its own, which it does at its lock screen and then confirms. Either way the
+    user ends up with no passcode and is free to set a new one.
+    """
+    admin_guard(request)
+    user_id = account_id_or_404(user_id)
+    with db() as conn:
+        row = conn.execute(
+            "SELECT locked, suspended FROM accounts WHERE id = %s", (user_id,)
+        ).fetchone()
         if not row:
             raise HTTPException(404, "No such account.")
-        if not row[0]:
-            raise HTTPException(409, "That account has no screen lock set.")
-        conn.execute("UPDATE accounts SET unlock_grant = now() WHERE id = %s", (user_id,))
+        locked, suspended = row
+        if not locked and not suspended:
+            raise HTTPException(409, "That account is not locked.")
+        conn.execute(
+            "UPDATE accounts SET suspended = false, suspended_at = NULL,"
+            " unlock_grant = CASE WHEN %s THEN now() ELSE NULL END WHERE id = %s",
+            (locked, user_id),
+        )
     log(user_id, "admin_unlock_issued")
     return {"ok": True}
+
+
+def temporary_password() -> str:
+    """A readable one-time password.
+
+    Avoids characters that are misread when someone types a password out of an
+    email -- no O/0, l/1/I -- because the alternative is a support call about a
+    password that was never wrong.
+    """
+    alphabet = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789"
+    return "-".join(
+        "".join(secrets.choice(alphabet) for _ in range(4)) for _ in range(3)
+    )
+
+
+@app.post("/v1/admin/users/{user_id}/reset")
+def admin_reset_user(user_id: str, request: Request) -> dict[str, object]:
+    """Full reset: clear every lock and issue a one-time password by email.
+
+    Used when the user is locked out entirely -- passcode forgotten, password
+    forgotten, or both. It clears the suspension, releases the passcode, ends
+    every session, and sets a temporary password that must be changed at the
+    next sign-in. Their invoices, history and backups are untouched: this
+    restores access, it does not erase data.
+
+    The temporary password is generated here and never stored in the clear, so
+    it exists only in the email. If mail delivery fails the reset is reported as
+    failed rather than silently leaving an account with a password nobody knows.
+    """
+    admin_guard(request)
+    user_id = account_id_or_404(user_id)
+    with db() as conn:
+        row = conn.execute(
+            "SELECT email, name, locked FROM accounts WHERE id = %s", (user_id,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "No such account.")
+        email, name, locked = row
+
+        password = temporary_password()
+        conn.execute(
+            "UPDATE accounts SET password_hash = %s, must_change_password = true,"
+            " suspended = false, suspended_at = NULL, locked = %s,"
+            " unlock_grant = CASE WHEN %s THEN now() ELSE NULL END WHERE id = %s",
+            (hash_password(password), locked, locked, user_id),
+        )
+        conn.execute("DELETE FROM tokens WHERE account_id = %s", (user_id,))
+
+    sent, detail = send_mail(
+        email,
+        "Your Utility account has been reset",
+        f"""
+        <div style="font-family:Segoe UI,Inter,Roboto,system-ui,sans-serif;
+                    max-width:520px;color:#0e1726;line-height:1.6">
+          <h2 style="margin:0 0 4px">Your account has been reset</h2>
+          <p style="color:#5b6779;margin:0 0 18px">Utility by Patience AI</p>
+          <p>Hello {escape(name or "")},</p>
+          <p>An administrator has reset your access. Any passcode on your machine has
+             been cleared, and you can sign in again with the temporary password below.</p>
+          <table style="border-collapse:collapse;margin:18px 0;width:100%">
+            <tr><td style="padding:8px 12px;background:#eef2f8;border-radius:8px 0 0 8px;
+                           color:#5b6779">Username</td>
+                <td style="padding:8px 12px;background:#eef2f8;border-radius:0 8px 8px 0;
+                           font-weight:600">{escape(email)}</td></tr>
+            <tr><td colspan="2" style="height:8px"></td></tr>
+            <tr><td style="padding:8px 12px;background:#eef2f8;border-radius:8px 0 0 8px;
+                           color:#5b6779">Temporary password</td>
+                <td style="padding:8px 12px;background:#eef2f8;border-radius:0 8px 8px 0;
+                           font-family:ui-monospace,Consolas,monospace;font-size:16px;
+                           font-weight:700;letter-spacing:.04em">{password}</td></tr>
+          </table>
+          <p><a href="https://patienceai.in/utility/"
+                style="display:inline-block;background:#0b57d0;color:#fff;text-decoration:none;
+                       padding:11px 20px;border-radius:9px;font-weight:600">
+             Open Utility</a></p>
+          <p>You will be asked to choose a new password as soon as you sign in. This
+             temporary one stops working at that point.</p>
+          <p style="color:#5b6779;font-size:13px">If you did not expect this, contact your
+             administrator — your data has not been changed or deleted.</p>
+        </div>
+        """,
+    )
+    log(user_id, "admin_reset", "mailed" if sent else f"mail failed: {detail}")
+    if not sent:
+        # The password has already changed, so say so plainly rather than let an
+        # administrator believe the user received something they did not.
+        raise HTTPException(
+            502,
+            f"The account was reset but the email could not be sent ({detail}). "
+            f"The temporary password is {password} — pass it on securely.",
+        )
+    return {"ok": True, "emailed": email}
 
 
 @app.get("/v1/admin/users/{user_id}/backups")

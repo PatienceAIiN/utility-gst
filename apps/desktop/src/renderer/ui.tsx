@@ -592,3 +592,147 @@ export function WhatsNewBanner({
     </Collapse>
   )
 }
+
+/**
+ * Shown when an administrator has locked the portal.
+ *
+ * Covers the app rather than disabling parts of it: a half-usable app invites
+ * someone to keep trying, and the lock is enforced on the server anyway. It
+ * re-checks on its own so the person sees it lift without restarting, and
+ * offers a way out if they are simply offline.
+ */
+export function SuspendedScreen({ onRecheck }: { onRecheck: () => void }): JSX.Element {
+  const [checking, setChecking] = useState(false)
+  return (
+    <Box
+      sx={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 2100,
+        bgcolor: 'background.default',
+        display: 'grid',
+        placeItems: 'center',
+        p: 3
+      }}
+    >
+      <Stack spacing={2.5} alignItems="center" sx={{ maxWidth: 440, textAlign: 'center' }}>
+        <Box
+          sx={{
+            width: 58,
+            height: 58,
+            borderRadius: '50%',
+            display: 'grid',
+            placeItems: 'center',
+            bgcolor: 'error.main',
+            color: '#fff',
+            fontSize: 26
+          }}
+        >
+          🔒
+        </Box>
+        <Typography variant="h6">This account is locked</Typography>
+        <Typography variant="body2" color="text.secondary">
+          An administrator has locked access to Utility for this account. Your invoices,
+          history and backups have not been changed or deleted.
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          Contact your administrator to have it unlocked, or to have your access reset.
+        </Typography>
+        <Button
+          variant="outlined"
+          disabled={checking}
+          startIcon={checking ? <CircularProgress size={15} /> : undefined}
+          onClick={() => {
+            setChecking(true)
+            void Promise.resolve(onRecheck()).finally(() => setTimeout(() => setChecking(false), 600))
+          }}
+        >
+          {checking ? 'Checking…' : 'Check again'}
+        </Button>
+      </Stack>
+    </Box>
+  )
+}
+
+/**
+ * Forces a replacement for an administrator-issued temporary password.
+ *
+ * Not dismissable: the password in play arrived by email, and leaving it in
+ * place would mean an account whose credential is sitting in an inbox. The
+ * current password is asked for because the server verifies it -- which also
+ * proves the person here is the one who received the email.
+ */
+export function ForcePasswordChange({ onDone }: { onDone: () => void }): JSX.Element {
+  const [current, setCurrent] = useState('')
+  const [next, setNext] = useState('')
+  const [again, setAgain] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const mismatch = again.length > 0 && next !== again
+  const tooShort = next.length > 0 && next.length < 10
+  const ready = current.length > 0 && next.length >= 10 && next === again && !busy
+
+  const submit = async (): Promise<void> => {
+    setBusy(true)
+    setError(null)
+    const result = await window.api.sync.changePassword(current, next)
+    setBusy(false)
+    if (result.ok) onDone()
+    else setError(result.error ?? 'That did not work.')
+  }
+
+  return (
+    <Dialog open maxWidth="xs" fullWidth disableEscapeKeyDown>
+      <DialogTitle>Choose a new password</DialogTitle>
+      <DialogContent>
+        <DialogContentText sx={{ mb: 2 }}>
+          Your access was reset and the password you signed in with was sent to you by
+          email. Choose one only you know before continuing.
+        </DialogContentText>
+        <Stack spacing={2}>
+          <TextField
+            label="Temporary password"
+            type="password"
+            value={current}
+            autoFocus
+            fullWidth
+            onChange={(event) => setCurrent(event.target.value)}
+          />
+          <TextField
+            label="New password"
+            type="password"
+            value={next}
+            fullWidth
+            error={tooShort}
+            helperText={tooShort ? 'At least 10 characters.' : 'At least 10 characters.'}
+            onChange={(event) => setNext(event.target.value)}
+          />
+          <TextField
+            label="New password again"
+            type="password"
+            value={again}
+            fullWidth
+            error={mismatch}
+            helperText={mismatch ? 'These do not match.' : ' '}
+            onChange={(event) => setAgain(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && ready) void submit()
+            }}
+          />
+          {error && <Alert severity="error">{error}</Alert>}
+        </Stack>
+      </DialogContent>
+      <DialogActions sx={{ px: 3, pb: 2 }}>
+        <Button
+          variant="contained"
+          disabled={!ready}
+          startIcon={busy ? <CircularProgress size={15} color="inherit" /> : undefined}
+          onClick={() => void submit()}
+        >
+          {busy ? 'Saving…' : 'Set password'}
+        </Button>
+      </DialogActions>
+    </Dialog>
+  )
+}

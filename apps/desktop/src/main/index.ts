@@ -14,6 +14,7 @@ import { sidecar } from './sidecar'
 import {
   applyQueuedRestore,
   backendUrl,
+  changePassword,
   clearBackupKey,
   consumeUnlock,
   setBackupKey,
@@ -574,6 +575,17 @@ function registerIpc(): void {
   ipcMain.handle('sync:applyQueuedRestore', async () => {
     const name = await applyQueuedRestore()
     return { applied: name !== null, name }
+  })
+  /** Account state the server owns: suspension and a pending password change. */
+  ipcMain.handle('sync:accountState', async () => {
+    const state = await lockState()
+    return { suspended: state.suspended, mustChangePassword: state.mustChangePassword }
+  })
+  ipcMain.handle('sync:changePassword', async (_event, raw: unknown) => {
+    const { current, replacement } = z
+      .object({ current: z.string().min(1), replacement: z.string().min(10).max(1024) })
+      .parse(raw)
+    return changePassword(current, replacement)
   })
 
   // --- intranet mesh (off by default) ---
