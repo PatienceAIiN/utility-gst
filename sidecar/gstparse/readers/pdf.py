@@ -14,8 +14,9 @@ from typing import Any
 import pdfplumber
 from dateutil import parser as dateparser
 
-from ..gst import is_valid_gstin
+from ..gst import SupplyType, is_valid_gstin
 from ..money import parse_money, parse_percent
+from ..tier2_infer import match_headers
 
 _GSTIN_TOKEN = re.compile(r"\b([0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z])\b")
 _INVOICE_NO = re.compile(r"invoice\s*(?:no|number|#)\s*\.?\s*:?\s*([A-Za-z0-9/\-_]+)", re.IGNORECASE)
@@ -153,9 +154,6 @@ class PdfDocument:
                     tables.append([[c for c in row] for row in table])
             self.text = "\n".join(chunks)
 
-        # Header row = the row whose cells best match known column names.
-        from ..tier2_infer import match_headers
-
         # Pick the row that matches the most known column names. Requiring a
         # quantity column by NAME used to be the gate, which meant one misspelt
         # header ("Quantiy") discarded the entire table. Arithmetic recovers the
@@ -188,18 +186,75 @@ class PdfDocument:
                 )
                 mapping = healed
         self.colmap = mapping
-        qty_col, rate_col = mapping.get("qty"), mapping.get("unit_rate")
-        for row in table[r_index + 1:]:
-            has_data = False
-            if qty_col is not None and qty_col < len(row):
-                has_data = parse_money(row[qty_col]) is not None
-            if not has_data and rate_col is not None and rate_col < len(row):
-                has_data = parse_money(row[rate_col]) is not None
-            (self.data_rows if has_data else self.footer_rows).append(row)
+        for row in body:
+            self._classify(row, mapping)
 
-        for other in (t for i, t in enumerate(tables) if i != t_index):
-            self.footer_rows.extend(other)
+        # A long invoice breaks across pages and pdfplumber hands back each
+        # page's grid separately. Dropping the later ones loses real line items
+        # silently -- the worst failure mode for a tax register, because a
+        # truncated invoice can still tie out against an equally truncated
+        # subtotal and look perfectly healthy.
+        width = max((len(r) for r in table), default=0)
+        for index, other in enumerate(tables):
+            if index == t_index:
+                continue
+            continuation = self._continuation_body(other, mapping, width)
+            if continuation is None:
+                self.footer_rows.extend(other)
+                continue
+            before = len(self.data_rows)
+            for row in continuation:
+                self._classify(row, mapping)
+            gained = len(self.data_rows) - before
+            if gained:
+                self.healed.append(
+                    f"Merged {gained} further line(s) from a continuation table; this "
+                    f"invoice's items run past a single table.")
         self.all_tables = tables
+
+    def _classify(self, row: list[str | None], mapping: dict[str, int]) -> None:
+        """A row carrying a quantity or a rate is a line item; anything else is
+        part of the totals band."""
+        qty_col, rate_col = mapping.get("qty"), mapping.get("unit_rate")
+        has_data = False
+        if qty_col is not None and qty_col < len(row):
+            has_data = parse_money(row[qty_col]) is not None
+        if not has_data and rate_col is not None and rate_col < len(row):
+            has_data = parse_money(row[rate_col]) is not None
+        (self.data_rows if has_data else self.footer_rows).append(row)
+
+    @staticmethod
+    def _continuation_body(
+        table: list[list[str | None]], mapping: dict[str, int], width: int
+    ) -> list[list[str | None]] | None:
+        """The rows of `table` that continue the line-item table, or None.
+
+        Deliberately strict: the grid must be the same width and must carry at
+        least one row with both a quantity and a rate in the mapped positions.
+        A table that merely repeats the header is picked up from below it. If a
+        wrong table were ever merged the invoice would stop tying out and block,
+        so the tie-out check remains the backstop for this heuristic.
+        """
+        qty_col, rate_col = mapping.get("qty"), mapping.get("unit_rate")
+        if qty_col is None or rate_col is None or not table:
+            return None
+        if max((len(r) for r in table), default=0) != width:
+            return None
+
+        start = 0
+        for index, row in enumerate(table):
+            if match_headers(row).get("unit_rate") == rate_col:
+                start = index + 1
+                break
+
+        body = table[start:]
+        usable = any(
+            qty_col < len(row) and rate_col < len(row)
+            and parse_money(row[qty_col]) is not None
+            and parse_money(row[rate_col]) is not None
+            for row in body
+        )
+        return body if usable else None
 
     # --- header field extraction ---
 
@@ -247,6 +302,39 @@ class PdfDocument:
         for table in self.all_tables:
             rows.extend(table)
         return rows
+
+    def supply_type_from_tax_heads(self) -> SupplyType | None:
+        """Intra vs inter, read off the tax heads the invoice actually charges.
+
+        A B2C buyer has no GSTIN, so the state pair cannot be compared and the
+        supply type would otherwise be undeterminable -- blocking an invoice that
+        plainly states its own answer. An invoice charging CGST and SGST is
+        intra-state; one charging IGST is inter-state. Templates often print all
+        three heads with zeros against the unused ones, so a head only counts
+        when it carries a non-zero amount.
+        """
+        intra = inter = False
+        for row in self._all_rows():
+            for cell in row:
+                if not cell:
+                    continue
+                label = cell.upper()
+                charged = _last_number(row)
+                if charged is None or charged == 0:
+                    continue
+                if "IGST" in label:
+                    inter = True
+                elif "CGST" in label or "SGST" in label:
+                    intra = True
+        if intra != inter:
+            return "intra" if intra else "inter"
+
+        # Nothing in the totals band: fall back to which head the page mentions.
+        text = self.text.upper()
+        has_igst, has_pair = "IGST" in text, ("CGST" in text or "SGST" in text)
+        if has_igst != has_pair:
+            return "inter" if has_igst else "intra"
+        return None
 
     def round_off(self) -> Decimal:
         for row in self._all_rows():

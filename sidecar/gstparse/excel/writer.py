@@ -193,7 +193,11 @@ def build_import_log(sheet: Worksheet, invoices: Sequence[Invoice], when: dt.dat
         sheet.column_dimensions[get_column_letter(index)].width = width
 
     for offset, invoice in enumerate(invoices, start=2):
-        warnings = "; ".join(f.rule_code for f in invoice.findings if f.severity == "warning")
+        # Info-level notes (a healed column, merged continuation pages) are kept
+        # in the log too: they record what the parser did to the source and an
+        # audit needs that, even though they are not shown as warnings in the app.
+        warnings = "; ".join(
+            f.rule_code for f in invoice.findings if f.severity in ("warning", "info"))
         blocking = "; ".join(f.rule_code for f in invoice.findings if f.severity == "blocking")
         values: tuple[str | int, ...] = (
             invoice.source_file, invoice.sha256, invoice.parse_tier,

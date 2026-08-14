@@ -367,3 +367,90 @@ def test_quantity_recovery_needs_the_tax_columns() -> None:
 
     assert _recover_quantity(D("4"), D("155"), D("18"), None, None, D("685.875")) is None
     assert _recover_quantity(D("4"), D("155"), D("18"), D("0"), D("104.63"), D("685.875")) is None
+
+
+# --- self-healing: invoices that run past one table -----------------------
+
+HDR = ["Sr. No.", "Description", "HSN CODE", "Quantiy", "Rate", "Amount"]
+MAP = {"sr_no": 0, "description": 1, "hsn": 2, "qty": 3, "unit_rate": 4, "amount": 5}
+
+
+def test_continuation_table_rows_are_merged() -> None:
+    """A long invoice breaks across pages and each page comes back as its own
+    table. Dropping the later ones loses real line items while the invoice can
+    still tie out against an equally truncated subtotal -- a silent shortfall."""
+    from gstparse.readers.pdf import PdfDocument
+
+    page2 = [HDR, ["9", "UPMA MIX", "21069099", "3", "199", "704.46"]]
+    body = PdfDocument._continuation_body(page2, MAP, len(HDR))
+    assert body is not None
+    assert body[0][1] == "UPMA MIX"
+
+
+def test_continuation_table_without_a_repeated_header_is_merged() -> None:
+    from gstparse.readers.pdf import PdfDocument
+
+    page2 = [["9", "UPMA MIX", "21069099", "3", "199", "704.46"]]
+    body = PdfDocument._continuation_body(page2, MAP, len(HDR))
+    assert body is not None and len(body) == 1
+
+
+def test_a_narrower_table_is_never_merged() -> None:
+    """Terms, bank details and signature blocks also come back as tables."""
+    from gstparse.readers.pdf import PdfDocument
+
+    terms = [["Account no", "1948674278"], ["IFSC", "KKBK0000725"]]
+    assert PdfDocument._continuation_body(terms, MAP, len(HDR)) is None
+
+
+def test_a_table_with_no_quantity_and_rate_pair_is_never_merged() -> None:
+    """The totals grid is the same width but carries no line items."""
+    from gstparse.readers.pdf import PdfDocument
+
+    totals = [[None, None, None, None, "Round Off", "-0.31"],
+              [None, None, None, None, "Total", "11472.00"]]
+    assert PdfDocument._continuation_body(totals, MAP, len(HDR)) is None
+
+
+# --- self-healing: round-off printed with the wrong sign -------------------
+
+def test_round_off_sign_is_corrected_only_when_the_flip_ties_out() -> None:
+    from gstparse.parser import _round_off_sign_is_wrong
+
+    # Printed +0.31 cannot work; -0.31 lands exactly on the stated total.
+    assert _round_off_sign_is_wrong(D("11472.31"), D("0.31"), D("11472.00"))
+
+
+def test_round_off_that_already_works_is_left_alone() -> None:
+    from gstparse.parser import _round_off_sign_is_wrong
+
+    assert not _round_off_sign_is_wrong(D("11472.31"), D("-0.31"), D("11472.00"))
+
+
+def test_round_off_is_not_flipped_when_neither_sign_ties_out() -> None:
+    """A real discrepancy must reach the tie-out check, not be papered over."""
+    from gstparse.parser import _round_off_sign_is_wrong
+
+    assert not _round_off_sign_is_wrong(D("11741.92"), D("0.31"), D("11472.00"))
+
+
+# --- self-healing: nil-rated lines and B2C supply type --------------------
+
+def test_nil_rated_line_does_not_vote_on_amount_semantics() -> None:
+    """At 0% GST the gross and taxable readings of the Amount column are the
+    same number, so a nil-rated line supports both hypotheses equally. Letting
+    it vote deadlocked the decision and blocked the invoice -- and exempt goods
+    are common on food invoices."""
+    colmap = {"qty": 0, "unit_rate": 1, "gst_rate": 2, "amount": 3}
+    rows = [["5", "100", "0%", "500"], ["3", "200", "18%", "708"]]
+    semantics = infer_amount_semantics(rows, colmap)
+    assert semantics.resolved
+    assert semantics.amount_is_gross is True
+
+
+def test_line_total_rule_is_silent_while_the_supply_type_is_unknown() -> None:
+    """No supply type means no tax split, so every taxed line would fail this
+    rule and bury the one finding that explains why."""
+    invoice = make_invoice(supply_type=None, buyer_gstin=None)
+    invoice.line_items = [make_line(cgst=None, sgst=None, cgst_rate=None, sgst_rate=None)]
+    assert rule_components_sum_to_line_total(invoice) == []

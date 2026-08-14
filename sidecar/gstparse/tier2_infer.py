@@ -176,7 +176,11 @@ def infer_amount_semantics(
         )
 
         amount = col(row, "amount")
-        if amount is not None:
+        # A nil-rated line carries no signal: with no tax, gross and taxable are
+        # the same number, so it would vote for whichever hypothesis is tested
+        # first and could deadlock the decision against the taxed lines. Exempt
+        # and nil-rated goods are common on food invoices, so this matters.
+        if amount is not None and gst_pct != 0:
             if _close(taxable, amount):
                 votes["amount_taxable"] += 1
             elif gst_pct is not None and _close(

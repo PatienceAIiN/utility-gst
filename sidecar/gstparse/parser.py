@@ -66,6 +66,23 @@ def _recover_quantity(
     return None
 
 
+def _round_off_sign_is_wrong(
+    base: Decimal, round_off: Decimal, stated: Decimal
+) -> bool:
+    """Whether the printed round-off carries the wrong sign.
+
+    Flipping it is only justified when the flip ties the invoice out exactly and
+    the printed sign does not. The invoice's own total decides; a round-off that
+    already works, or one where neither sign works, is left untouched so the
+    tie-out check can report the real discrepancy.
+    """
+    if round_off == 0:
+        return False
+    printed_delta = abs(base + round_off - stated)
+    flipped_delta = abs(base - round_off - stated)
+    return printed_delta > Decimal("0.05") >= flipped_delta
+
+
 def sha256_of(path: Path) -> str:
     digest = hashlib.sha256()
     with open(path, "rb") as handle:
@@ -84,6 +101,8 @@ def parse_pdf(path: Path) -> Invoice:
     gstins = document.gstins()
     seller_gstin = gstins[0] if gstins else None
     buyer_gstin = gstins[1] if len(gstins) > 1 else None
+    derived_supply = resolve_supply_type(seller_gstin, buyer_gstin)
+    supply_from_heads = None if derived_supply else document.supply_type_from_tax_heads()
 
     invoice = Invoice(
         source_file=path.name,
@@ -94,14 +113,23 @@ def parse_pdf(path: Path) -> Invoice:
         seller_gstin=seller_gstin,
         buyer_name=document.buyer_name(),
         buyer_gstin=buyer_gstin,
-        supply_type=resolve_supply_type(seller_gstin, buyer_gstin),
+        supply_type=resolve_supply_type(seller_gstin, buyer_gstin) or supply_from_heads,
         round_off=document.round_off(),
         stated_grand_total=document.stated_grand_total(),
         parse_tier=2,
     )
 
     for note in document.healed:
-        invoice.findings.append(Finding("TIER2_HEALED", "warning", note))
+        invoice.findings.append(Finding("TIER2_HEALED", "info", note))
+
+    if supply_from_heads is not None:
+        invoice.findings.append(
+            Finding(
+                "SUPPLY_TYPE_FROM_TAX_HEADS", "warning",
+                f"No buyer GSTIN, so the supply type was taken from the tax the invoice "
+                f"actually charges: {'IGST' if supply_from_heads == 'inter' else 'CGST/SGST'}, "
+                f"i.e. {supply_from_heads}-state. Confirm the place of supply.")
+        )
 
     if not document.data_rows:
         invoice.findings.append(
@@ -200,6 +228,30 @@ def parse_pdf(path: Path) -> Invoice:
                 line_total=q2(taxable + tax),
             )
         )
+
+    if invoice.skipped_zero_qty:
+        skipped = invoice.skipped_zero_qty
+        invoice.findings.append(
+            Finding(
+                "ZERO_QTY_SKIPPED", "info",
+                f"{len(skipped)} of {len(skipped) + len(invoice.line_items)} row(s) were "
+                f"left out because the invoice shows no quantity against them "
+                f"(line{'s' if len(skipped) > 1 else ''} "
+                f"{', '.join(str(n) for n in skipped)}). They are catalogue rows the "
+                f"customer did not order. Check that against the vendor's copy if the "
+                f"count looks wrong.")
+        )
+
+    if invoice.stated_grand_total is not None:
+        base = q2(sum((i.line_total for i in invoice.line_items), Decimal("0.00")))
+        if _round_off_sign_is_wrong(base, invoice.round_off, invoice.stated_grand_total):
+            invoice.findings.append(
+                Finding(
+                    "ROUND_OFF_SIGN_CORRECTED", "warning",
+                    f"Round-off is printed as {invoice.round_off} but the invoice only "
+                    f"totals correctly as {-invoice.round_off}; using {-invoice.round_off}.")
+            )
+            invoice.round_off = -invoice.round_off
 
     from .validate import validate_invoice
 

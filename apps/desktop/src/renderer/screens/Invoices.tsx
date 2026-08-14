@@ -8,7 +8,7 @@ import { Busy, EmptyState, Section } from '../ui'
 
 interface Finding {
   rule_code: string
-  severity: 'blocking' | 'warning'
+  severity: 'blocking' | 'warning' | 'info'
   message: string
   src_line: number | null
 }
@@ -207,7 +207,13 @@ export default function Invoices({
           {invoice.findings.map((finding, index) => (
             <Alert
               key={index}
-              severity={finding.severity === 'blocking' ? 'error' : 'warning'}
+              severity={
+                finding.severity === 'blocking'
+                  ? 'error'
+                  : finding.severity === 'info'
+                    ? 'info'
+                    : 'warning'
+              }
               sx={{ borderRadius: 0 }}
             >
               {finding.message}

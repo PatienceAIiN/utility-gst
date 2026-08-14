@@ -57,6 +57,11 @@ def rule_qty_times_rate_equals_taxable(invoice: Invoice) -> list[Finding]:
 # --- §6.2 -----------------------------------------------------------------
 
 def rule_components_sum_to_line_total(invoice: Invoice) -> list[Finding]:
+    if invoice.supply_type is None:
+        # With the supply type undetermined the tax cannot be split into IGST or
+        # CGST/SGST at all, so every taxed line would fail this rule. R4 already
+        # reports that cause; repeating it per line buries it.
+        return []
     findings = []
     zero = Decimal("0.00")
     for item in invoice.line_items:
@@ -159,12 +164,23 @@ def rule_gstin_and_hsn_wellformed(invoice: Invoice) -> list[Finding]:
 
 def rule_unit_present(invoice: Invoice) -> list[Finding]:
     missing = [i.src_line for i in invoice.line_items if not i.unit]
-    if missing:
+    if not missing:
+        return []
+    # A template with no unit column at all leaves every line blank. That is a
+    # property of the vendor's stationery, not a defect in this invoice, and
+    # flagging it in amber on every file trains people to ignore the amber that
+    # matters. Some lines blank and others filled is a real gap and still warns.
+    if len(missing) == len(invoice.line_items):
         return [Finding(
-            "R8_UNIT_UNKNOWN", "warning",
-            f"No unit on {len(missing)} line(s); the invoice does not state one. "
-            f"Resolve from the HSN/product master or leave blank -- never guessed.")]
-    return []
+            "R8_UNIT_UNKNOWN", "info",
+            "This vendor's invoice does not carry a unit column, so Unit is blank on "
+            "every line. Resolve from the HSN/product master if the register needs it "
+            "-- a unit is never guessed.")]
+    return [Finding(
+        "R8_UNIT_UNKNOWN", "warning",
+        f"No unit on {len(missing)} of {len(invoice.line_items)} line(s), though other "
+        f"lines state one. Resolve from the HSN/product master or leave blank -- never "
+        f"guessed.")]
 
 
 ALL_RULES = (

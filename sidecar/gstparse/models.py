@@ -53,7 +53,7 @@ class Finding:
     """A validation result. `blocking` findings disable export (brief §6)."""
 
     rule_code: str
-    severity: str  # "blocking" | "warning"
+    severity: str  # "blocking" | "warning" | "info"
     message: str
     src_line: int | None = None
 
