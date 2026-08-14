@@ -1,0 +1,52 @@
+# macOS build.
+#
+# Two architectures are built as separate CI jobs rather than a universal binary:
+# the Python sidecar is frozen by PyInstaller, which cannot cross-compile, so an
+# arm64 sidecar has to be produced on an arm64 runner and an x64 one on Intel.
+# Stapling two incompatible sidecars into one universal app would produce a
+# bundle that launches everywhere and parses nowhere.
+appId: in.patienceai.utility
+productName: Utility
+copyright: © Patience AI
+directories:
+  output: ../../release/mac
+  buildResources: build
+files:
+  - out/**/*
+  - package.json
+extraResources:
+  - from: ../../sidecar/dist-mac/gstparse
+    to: sidecar
+    filter: ["**/*"]
+mac:
+  icon: build/icon.png
+  category: public.app-category.finance
+  # Architecture is passed on the command line (--arm64 / --x64) rather than
+  # written here: config interpolation does not apply inside an arch array.
+  target:
+    - dmg
+    - zip                  # zip is what electron-updater consumes on macOS
+  # Unsigned until an Apple Developer membership exists. Setting identity null
+  # makes that explicit rather than letting electron-builder fail hunting for a
+  # certificate in the keychain.
+  identity: null
+  hardenedRuntime: false
+  gatekeeperAssess: false
+  # The sidecar is an unsigned binary inside the bundle; without this the app
+  # will not launch even locally.
+  extendInfo:
+    NSHumanReadableCopyright: © Patience AI
+dmg:
+  artifactName: Utility-${version}-${arch}.${ext}
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
+publish:
+  provider: github
+  owner: PatienceAIiN
+  repo: utility-gst
+  channel: latest
