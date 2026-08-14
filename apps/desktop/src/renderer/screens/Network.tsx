@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   Alert, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle,
-  Divider, FormControlLabel, IconButton, Paper, Stack, Switch, TextField, ToggleButton,
-  ToggleButtonGroup, Tooltip, Typography
+  Divider, FormControlLabel, IconButton, MenuItem, Paper, Stack, Switch, TextField, Tooltip,
+  Typography
 } from '@mui/material'
 import LanIcon from '@mui/icons-material/Lan'
 import LinkOffIcon from '@mui/icons-material/LinkOff'
@@ -16,10 +16,39 @@ import { Busy, EmptyState, Section, type ConfirmSpec } from '../ui'
  * and permissions start at none.
  */
 
-const LABELS: Record<Permission, string> = {
-  view: 'See the list',
-  read: 'Open records',
-  write: 'Send records here'
+/**
+ * Access is offered as one escalating choice rather than three independent
+ * toggles. The levels genuinely nest -- opening a record is meaningless without
+ * seeing the list -- so three checkboxes allowed contradictory combinations
+ * (write without view) that had to be reasoned about but never made sense.
+ */
+const LEVELS: { value: string; label: string; grants: Permission[]; hint: string }[] = [
+  { value: 'none', label: 'No access', grants: [], hint: 'Connected, but cannot see anything.' },
+  {
+    value: 'view',
+    label: 'View only',
+    grants: ['view'],
+    hint: 'Sees invoice numbers, dates and row counts. No amounts, GSTINs or party names.'
+  },
+  {
+    value: 'read',
+    label: 'Read',
+    grants: ['view', 'read'],
+    hint: 'Can open full records, including amounts and party details.'
+  },
+  {
+    value: 'write',
+    label: 'Read and write',
+    grants: ['view', 'read', 'write'],
+    hint: 'Can also send records to this computer, which appear in your History.'
+  }
+]
+
+const levelOf = (grants: Permission[]): string => {
+  if (grants.includes('write')) return 'write'
+  if (grants.includes('read')) return 'read'
+  if (grants.includes('view')) return 'view'
+  return 'none'
 }
 
 export default function Network({
@@ -248,25 +277,31 @@ export default function Network({
                   {peer.paired && (
                     <>
                       <Divider sx={{ my: 1.5 }} />
-                      <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
+                      <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1.5 }}>
                         What {peer.name} may do on this computer. Nothing is allowed until you
                         choose.
                       </Typography>
-                      <ToggleButtonGroup
+                      <TextField
+                        select
                         size="small"
-                        value={peer.grants}
-                        onChange={async (_e, value: Permission[]) => {
-                          const result = await window.api.mesh.setGrants(peer.deviceId, value)
+                        label="Access level"
+                        sx={{ minWidth: 240 }}
+                        value={levelOf(peer.grants)}
+                        onChange={async (e) => {
+                          const level = LEVELS.find((l) => l.value === e.target.value)
+                          if (!level) return
+                          const result = await window.api.mesh.setGrants(peer.deviceId, level.grants)
                           if (!result.ok) setError(result.error ?? 'Could not change permissions')
                           await refresh()
                         }}
+                        helperText={LEVELS.find((l) => l.value === levelOf(peer.grants))?.hint}
                       >
-                        {(['view', 'read', 'write'] as Permission[]).map((permission) => (
-                          <ToggleButton key={permission} value={permission}>
-                            {LABELS[permission]}
-                          </ToggleButton>
+                        {LEVELS.map((level) => (
+                          <MenuItem key={level.value} value={level.value}>
+                            {level.label}
+                          </MenuItem>
                         ))}
-                      </ToggleButtonGroup>
+                      </TextField>
                     </>
                   )}
                 </Paper>

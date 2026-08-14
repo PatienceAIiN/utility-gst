@@ -202,6 +202,31 @@ class Mesh {
       return send(202, { pending: true })
     }
 
+    // Confirmation that the far side approved an offer WE sent. Proof is an
+    // HMAC over the secret we generated, which only a device that received our
+    // offer can produce -- so this cannot be forged by anything that merely
+    // discovered our address.
+    if (path === '/mesh/pair/confirm' && request.method === 'POST') {
+      let parsed: { deviceId?: string; name?: string; proof?: string }
+      try {
+        parsed = JSON.parse(body) as typeof parsed
+      } catch {
+        return send(400, { error: 'Bad request.' })
+      }
+      const offer = parsed.deviceId ? this.outgoing.get(parsed.deviceId) : undefined
+      if (!offer || !parsed.proof) return send(401, { error: 'No pending offer.' })
+      const expected = createHmac('sha256', offer.secret)
+        .update(`confirm:${parsed.deviceId}`)
+        .digest('hex')
+      const a = Buffer.from(expected)
+      const b = Buffer.from(parsed.proof)
+      if (a.length !== b.length || !timingSafeEqual(a, b)) {
+        return send(401, { error: 'Bad proof.' })
+      }
+      this.confirmOutgoing(parsed.deviceId!, String(parsed.name ?? 'Utility device').slice(0, 80))
+      return send(200, { ok: true })
+    }
+
     // Everything below requires a paired, signed request.
     const record = this.verify(request, path, body)
     if (!record) return send(401, { error: 'Not paired, or signature invalid.' })
@@ -415,6 +440,24 @@ class Mesh {
   }
 
   /** Approve a pending request AFTER the operator has matched the code. */
+  private async notifyApproved(deviceId: string, secret: string): Promise<void> {
+    const peer = this.seen.get(deviceId)
+    if (!peer || !peer.port) return
+    const state = this.load()
+    const proof = createHmac('sha256', secret).update(`confirm:${state.deviceId}`).digest('hex')
+    try {
+      await fetch(`http://${peer.address}:${peer.port}/mesh/pair/confirm`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ deviceId: state.deviceId, name: state.deviceName, proof }),
+        signal: AbortSignal.timeout(8000)
+      })
+    } catch {
+      // Best effort. If it does not land, the requester can retry Connect;
+      // an approval that is not delivered must not leave THIS side broken.
+    }
+  }
+
   approvePair(deviceId: string, code: string): { ok: boolean; error?: string } {
     const request = this.pending.get(deviceId)
     if (!request) return { ok: false, error: 'No pending request from that device.' }
@@ -429,6 +472,9 @@ class Mesh {
     }
     this.persist()
     this.pending.delete(deviceId)
+    // Tell the requester, or it sits showing "Not connected" forever while this
+    // side shows "Connected" -- the two views must agree.
+    void this.notifyApproved(deviceId, request.secret)
     return { ok: true }
   }
 
