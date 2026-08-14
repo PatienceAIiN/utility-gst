@@ -21,9 +21,14 @@ linux:
   maintainer: Patience AI <support@patienceai.in>
   vendor: Patience AI
   target:
+    # AppImage first: it is the only Linux target electron-updater can update
+    # in place. rpm and deb are managed by the system package manager instead,
+    # which is the right owner of a system-installed package.
+    - target: AppImage
+      arch: [x64]
     - target: rpm
       arch: [x64]
-    - target: AppImage
+    - target: deb
       arch: [x64]
   category: Office
   synopsis: GST invoice digitisation and sales register export
@@ -36,7 +41,27 @@ linux:
       Name: Utility
       Comment: GST invoice digitisation by Patience AI
       Categories: Office;Finance;
+deb:
+  # Same dependency set as the rpm target; electron-builder does not infer one
+  # from the other.
+  depends:
+    - libgtk-3-0
+    - libnotify4
+    - libnss3
+    - libxss1
+    - libxtst6
+    - xdg-utils
+    - libatspi2.0-0
+    - libuuid1
+    - libasound2
+
 rpm:
   # rpmbuild strips and re-links by default, which corrupts the PyInstaller
   # bundle's embedded loader. Leave the payload alone.
   fpm: ["--rpm-tag", "%define _build_id_links none"]
+
+publish:
+  provider: github
+  owner: PatienceAIiN
+  repo: utility-gst
+  channel: latest

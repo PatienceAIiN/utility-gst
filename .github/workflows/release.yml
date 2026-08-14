@@ -123,11 +123,90 @@ jobs:
             release/${{ matrix.channel }}/*.yml
           retention-days: 14
 
+
+  build-linux:
+    needs: test-core
+    # 22.04 deliberately, not latest: a binary built against an older glibc runs
+    # on newer distributions, but not the other way round. Building on the
+    # newest Ubuntu would produce packages that fail to start on anything older.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build Python sidecar (PyInstaller onedir)
+        working-directory: sidecar
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install pyinstaller
+          # run_sidecar.py, not gstparse/cli.py -- PyInstaller runs its target as
+          # __main__, which breaks every relative import inside the package.
+          pyinstaller --noconfirm --onedir --name gstparse \
+            --distpath dist-linux --paths . \
+            --collect-all pdfplumber --collect-all pdfminer --collect-all openpyxl \
+            --collect-all pypdfium2 \
+            run_sidecar.py
+
+      - name: Verify the frozen sidecar actually runs
+        working-directory: sidecar
+        run: |
+          echo '{"jsonrpc":"2.0","id":1,"method":"ping"}' \
+            | ./dist-linux/gstparse/gstparse rpc | grep -q '"ok": true'
+          echo "sidecar responds"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Install desktop deps
+        working-directory: apps/desktop
+        run: npm ci
+
+      - name: Install packaging tools
+        # electron-builder shells out to rpmbuild for the rpm target and needs
+        # fakeroot/dpkg for deb.
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends rpm fakeroot
+
+      - name: Typecheck
+        working-directory: apps/desktop
+        run: npm run typecheck
+
+      - name: Build and package
+        working-directory: apps/desktop
+        env:
+          BUILD_CODE: ${{ github.run_number }}
+          UPDATE_CHANNEL: modern
+        run: |
+          npm run build
+          for i in 1 2 3; do
+            npx electron-builder --linux --publish never --config electron-builder.linux.yml && exit 0
+            echo "::warning::packaging attempt $i failed; retrying"
+            sleep 20
+          done
+          exit 1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: utility-linux
+          path: |
+            release/linux/*.AppImage
+            release/linux/*.rpm
+            release/linux/*.deb
+            release/linux/*.yml
+            release/linux/*.blockmap
+          retention-days: 14
+
   # Attach the installers to a GitHub Release so there is a direct download URL
   # to open on the target Windows machine -- Actions artifacts require a login
   # and download slowly through the API.
   release:
-    needs: build-windows
+    needs: [build-windows, build-linux]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
@@ -152,7 +231,8 @@ jobs:
           # by every channel under the same name. It is not an update manifest
           # and must not be published.
           mapfile -t ASSETS < <(find dist -type f \
-            \( -name '*.exe' -o -name '*.blockmap' -o -name '*.yml' \) \
+            \( -name '*.exe' -o -name '*.AppImage' -o -name '*.rpm' -o -name '*.deb' \
+               -o -name '*.blockmap' -o -name '*.yml' \) \
             ! -name 'builder-debug.yml' | sort)
           printf 'attaching: %s\n' "${ASSETS[@]}"
           [ "${#ASSETS[@]}" -gt 0 ] || { echo "::error::no artifacts found"; exit 1; }
@@ -173,7 +253,10 @@ jobs:
           **Windows will warn.** Smart App Control / SmartScreen blocks unsigned software; this is expected until a code-signing certificate is in place. Unblock the file before running — see \`DEPLOYMENT.md\` section 2a.
 
           - \`Utility-Setup-${GITHUB_REF_NAME#v}.exe\` — Windows 10/11
-          - \`Utility-Setup-${GITHUB_REF_NAME#v}-legacy.exe\` — Windows 7 SP1/8/8.1" \
+          - \`Utility-Setup-${GITHUB_REF_NAME#v}-legacy.exe\` — Windows 7 SP1/8/8.1
+          - \`Utility-${GITHUB_REF_NAME#v}.AppImage\` — any Linux (updates in place)
+          - \`utility-desktop-${GITHUB_REF_NAME#v}.x86_64.rpm\` — Fedora / RHEL
+          - \`utility-desktop_${GITHUB_REF_NAME#v}_amd64.deb\` — Ubuntu / Debian" \
             "${ASSETS[@]}"
 
   publish:
