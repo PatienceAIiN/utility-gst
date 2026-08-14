@@ -5,6 +5,8 @@ from __future__ import annotations
 import datetime as dt
 from decimal import Decimal as D
 
+import pytest
+
 from gstparse.models import Finding, Invoice, LineItem
 from gstparse.tier2_infer import infer_amount_semantics, match_headers
 from gstparse.validate import (
@@ -231,3 +233,137 @@ def test_tier2_ignores_zero_qty_rows_which_carry_no_signal() -> None:
     semantics = infer_amount_semantics(rows, colmap)
     assert semantics.sample_size == 1
     assert semantics.amount_is_gross is True
+
+
+# --- self-healing: unreadable headers -------------------------------------
+
+def test_misspelt_quantity_header_still_matches() -> None:
+    """A real invoice shipped "Quantiy". An exact match dropped the column,
+    which discarded the whole table and produced zero rows."""
+    header = ["Sr. No.", "Description", "HSN CODE", "Quantiy", "Rate", "Gst Rate",
+              "Gst Value", "Gst Amount", "Amount"]
+    mapping = match_headers(header)
+    assert mapping["qty"] == 3
+    assert mapping["unit_rate"] == 4
+
+
+@pytest.mark.parametrize(
+    "typo,field",
+    [
+        ("Quantiy", "qty"), ("Quantty", "qty"), ("Qauntity", "qty"),
+        ("Descripton", "description"), ("Descriptoin", "description"),
+        ("Taxabel", "taxable"),
+    ],
+)
+def test_common_header_typos_are_tolerated(typo: str, field: str) -> None:
+    assert field in match_headers([typo, "Rate", "Amount"])
+
+
+def test_short_headers_stay_strict() -> None:
+    """"Rate" and "Date" differ by one character. Tolerating that would put a
+    date into the unit-rate column, which is exactly the silent error the
+    application exists to prevent."""
+    mapping = match_headers(["Date"])
+    assert "unit_rate" not in mapping
+
+
+def test_unrelated_header_is_not_fuzzy_matched() -> None:
+    mapping = match_headers(["Warehouse", "Dispatch"])
+    assert mapping == {} or "qty" not in mapping
+
+
+def test_columns_recovered_from_arithmetic_when_header_unreadable() -> None:
+    """With no usable header text at all, the qty/rate/amount triple is found
+    by testing qty x rate == amount across the rows."""
+    from gstparse.readers.pdf import infer_columns_arithmetically
+
+    rows = [
+        ["DOSA MIX", "60", "129", "7740"],
+        ["IDLY MIX", "42", "143", "6006"],
+        ["UPMA MIX", "5", "199", "995"],
+    ]
+    found = infer_columns_arithmetically(rows, {})
+    assert found["qty"] == 1
+    assert found["unit_rate"] == 2
+    assert found["amount"] == 3
+
+
+def test_arithmetic_recovery_declines_when_nothing_agrees() -> None:
+    """Random numbers must not produce a confident column map."""
+    from gstparse.readers.pdf import infer_columns_arithmetically
+
+    rows = [["A", "3", "7", "999"], ["B", "4", "11", "1234"], ["C", "9", "2", "77"]]
+    found = infer_columns_arithmetically(rows, {})
+    assert "qty" not in found
+
+
+def test_missing_total_is_not_reported_when_nothing_parsed() -> None:
+    """The absent total is a symptom. Reporting it alongside "no line items"
+    points the operator at the wrong problem."""
+    invoice = make_invoice([], stated_grand_total=None)
+    invoice.line_items = []
+    assert rule_invoice_ties_out(invoice) == []
+
+
+def test_missing_total_reports_the_computed_figure_to_check() -> None:
+    invoice = make_invoice(stated_grand_total=None)
+    findings = rule_invoice_ties_out(invoice)
+    assert findings[0].rule_code == "R3_NO_STATED_TOTAL"
+    assert "45666.00" in findings[0].message
+
+
+def test_net_amount_is_not_mistaken_for_gst_amount() -> None:
+    """"net amount" and "gst amount" are two substitutions apart -- close enough
+    for the length tolerance, and a swap would put tax in the value column."""
+    mapping = match_headers(["Description", "Rate", "Gst Amount", "Net Amount"])
+    assert mapping["gst_amount"] == 2
+    assert mapping["amount"] == 3
+
+
+def test_exact_header_match_outranks_a_fuzzy_one() -> None:
+    """"Unit" is a UOM column, but is one character from quantity's "units"."""
+    mapping = match_headers(["Qty", "Unit", "Rate"])
+    assert mapping["qty"] == 0
+    assert mapping["unit"] == 1
+
+
+# --- self-healing: quantity printed rounded, billed fractional -------------
+
+def test_quantity_recovered_when_printed_rounded_but_billed_fractional() -> None:
+    """A sample invoice prints QTY 4 while every money column on the line is
+    computed from 3.75, overstating the invoice by the difference."""
+    from gstparse.parser import _recover_quantity
+
+    assert _recover_quantity(
+        printed=D("4"), rate=D("155"), gst_pct=D("18"),
+        gst_value=D("27.90"), gst_amount=D("104.63"), amount=D("685.875"),
+    ) == D("3.75")
+
+
+def test_quantity_recovery_declines_when_the_printed_value_is_consistent() -> None:
+    """The common case: nothing disagrees, so nothing is overridden."""
+    from gstparse.parser import _recover_quantity
+
+    assert _recover_quantity(
+        printed=D("6"), rate=D("209"), gst_pct=D("18"),
+        gst_value=D("37.62"), gst_amount=D("225.72"), amount=D("1479.72"),
+    ) is None
+
+
+def test_quantity_recovery_declines_when_the_amount_does_not_confirm_it() -> None:
+    """The tax columns imply 3.75, but the Amount column agrees with neither
+    quantity. Two figures must corroborate before the cell is overridden --
+    otherwise the invoice must block, not be silently rewritten."""
+    from gstparse.parser import _recover_quantity
+
+    assert _recover_quantity(
+        printed=D("4"), rate=D("155"), gst_pct=D("18"),
+        gst_value=D("27.90"), gst_amount=D("104.63"), amount=D("9999.00"),
+    ) is None
+
+
+def test_quantity_recovery_needs_the_tax_columns() -> None:
+    from gstparse.parser import _recover_quantity
+
+    assert _recover_quantity(D("4"), D("155"), D("18"), None, None, D("685.875")) is None
+    assert _recover_quantity(D("4"), D("155"), D("18"), D("0"), D("104.63"), D("685.875")) is None

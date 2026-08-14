@@ -23,7 +23,7 @@ HEADER_SYNONYMS: Final[dict[str, tuple[str, ...]]] = {
     "description": ("description", "particulars", "item", "product", "goods", "item name",
                     "product description", "name of product"),
     "hsn": ("hsn", "hsn code", "hsn/sac", "hsn sac", "sac", "hsn no"),
-    "qty": ("qty", "quantity", "qty.", "nos", "no of units", "units"),
+    "qty": ("qty", "quantity", "quantiy", "qnty", "qty.", "nos", "no of units", "units", "pcs"),
     "unit": ("unit", "uom", "u o m", "per"),
     "unit_rate": ("rate", "unit rate", "price", "unit price", "rate per unit", "mrp"),
     "gst_rate": ("gst rate", "gst %", "gst%", "tax rate", "rate of tax", "gst rate %"),
@@ -40,13 +40,64 @@ def _normalise(text: str) -> str:
     return _NORM.sub(" ", text.lower().replace("\n", " ")).strip().replace("  ", " ")
 
 
+def _edit_distance(a: str, b: str) -> int:
+    """Damerau-Levenshtein (optimal string alignment). Small inputs, simple DP.
+
+    Adjacent transposition costs 1, not 2. Swapped letters are the commonest
+    typing slip -- a real header read "Taxabel" -- and charging 2 for it would
+    force a tolerance loose enough to start matching genuinely unrelated words.
+    """
+    if a == b:
+        return 0
+    if not a or not b:
+        return len(a) or len(b)
+    rows = [[0] * (len(b) + 1) for _ in range(len(a) + 1)]
+    for i in range(len(a) + 1):
+        rows[i][0] = i
+    for j in range(len(b) + 1):
+        rows[0][j] = j
+    for i in range(1, len(a) + 1):
+        for j in range(1, len(b) + 1):
+            cost = int(a[i - 1] != b[j - 1])
+            rows[i][j] = min(
+                rows[i - 1][j] + 1, rows[i][j - 1] + 1, rows[i - 1][j - 1] + cost
+            )
+            if i > 1 and j > 1 and a[i - 1] == b[j - 2] and a[i - 2] == b[j - 1]:
+                rows[i][j] = min(rows[i][j], rows[i - 2][j - 2] + 1)
+    return rows[-1][-1]
+
+
+def _close_enough(candidate: str, synonym: str) -> bool:
+    """Tolerate a typo in a header.
+
+    Real invoices contain them -- one sample header reads "Quantiy". An exact
+    match dropped the quantity column, which took the whole header row with it
+    and produced zero rows and a misleading "no grand total" message. The
+    tolerance scales with word length so short words stay strict: "rate" and
+    "date" differ by one character and must not be conflated.
+    """
+    if len(synonym) < 5:
+        return False
+    # A typo almost never lands on the first letter, and requiring it to match
+    # keeps distinct fields apart: "net amount" and "gst amount" are only two
+    # substitutions apart, which the length tolerance alone would accept.
+    if not candidate or candidate[0] != synonym[0]:
+        return False
+    allowed = 1 if len(synonym) < 8 else 2
+    return _edit_distance(candidate, synonym) <= allowed
+
+
 def match_headers(header_cells: list[str | None]) -> dict[str, int]:
     """Map canonical field -> column index by fuzzy header match.
 
     Longest synonym wins so "gst rate" is not swallowed by "rate", and a column
     already claimed by a more specific field is not reassigned.
     """
-    scored: list[tuple[int, str, int]] = []  # (synonym length, field, col index)
+    # (exact?, synonym length, field, col index). Exactness outranks length so a
+    # literal match always beats a fuzzy one -- otherwise a header reading
+    # "Unit" ties with quantity's "units" and the winner falls out of
+    # alphabetical order rather than out of the evidence.
+    scored: list[tuple[int, int, str, int]] = []
     for index, cell in enumerate(header_cells):
         if not cell:
             continue
@@ -56,12 +107,14 @@ def match_headers(header_cells: list[str | None]) -> dict[str, int]:
         for field_name, synonyms in HEADER_SYNONYMS.items():
             for synonym in synonyms:
                 if norm == synonym or norm.startswith(synonym + " ") or norm == synonym.replace(" ", ""):
-                    scored.append((len(synonym), field_name, index))
+                    scored.append((1, len(synonym), field_name, index))
+                elif _close_enough(norm, synonym):
+                    scored.append((0, len(synonym), field_name, index))
 
     scored.sort(reverse=True)
     mapping: dict[str, int] = {}
     taken: set[int] = set()
-    for _, field_name, index in scored:
+    for _, _, field_name, index in scored:
         if field_name not in mapping and index not in taken:
             mapping[field_name] = index
             taken.add(index)

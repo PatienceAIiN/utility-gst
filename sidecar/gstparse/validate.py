@@ -72,9 +72,16 @@ def rule_components_sum_to_line_total(invoice: Invoice) -> list[Finding]:
 # --- §6.3 -----------------------------------------------------------------
 
 def rule_invoice_ties_out(invoice: Invoice) -> list[Finding]:
+    if not invoice.line_items:
+        # Nothing was read. The absent total is a symptom; reporting it here
+        # would point the operator at the wrong problem.
+        return []
     if invoice.stated_grand_total is None:
-        return [Finding("R3_NO_STATED_TOTAL", "warning",
-                        "No grand total found on the invoice, so it cannot be tied out.")]
+        return [Finding(
+            "R3_NO_STATED_TOTAL", "warning",
+            f"No grand total was found on the invoice, so it cannot be tied out. "
+            f"The {len(invoice.line_items)} line(s) read come to "
+            f"{invoice.computed_grand_total} — check that against the invoice by hand.")]
     delta = invoice.tie_out_delta or Decimal("0.00")
     if abs(delta) > INVOICE_TOLERANCE:
         return [Finding(

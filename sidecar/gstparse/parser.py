@@ -24,6 +24,48 @@ from .readers.pdf import PdfDocument
 from .tier2_infer import infer_amount_semantics, match_headers
 
 
+def _recover_quantity(
+    printed: Decimal,
+    rate: Decimal,
+    gst_pct: Decimal | None,
+    gst_value: Decimal | None,
+    gst_amount: Decimal | None,
+    amount: Decimal | None,
+) -> Decimal | None:
+    """Recover a quantity the vendor printed rounded but billed fractionally.
+
+    One sample invoice prints QTY 4 and QTY 3 on two lines while every money
+    column on those lines is computed from 3.75 and 2.5. Taking the printed
+    integer overstated the invoice by exactly the difference.
+
+    The true quantity is implied by two other printed columns -- per-unit tax
+    into total line tax -- and is then only accepted if it also reproduces the
+    printed line Amount, which the printed quantity must simultaneously fail to
+    reproduce. Two independent figures have to agree against the quantity cell
+    before it is overridden; short of that the mismatch stays and the invoice
+    blocks, because a wrong quantity in the register is worse than a rejection.
+    """
+    if gst_value is None or gst_amount is None or gst_value == 0 or amount is None:
+        return None
+
+    implied = q2(gst_amount / gst_value)
+    if implied <= 0 or implied == printed:
+        return None
+
+    def reproduces_amount(qty: Decimal) -> bool:
+        taxable = qty * rate
+        if abs(taxable - amount) <= Decimal("0.05"):
+            return True
+        if gst_pct is None:
+            return False
+        gross = taxable * (Decimal(1) + gst_pct / Decimal(100))
+        return abs(gross - amount) <= Decimal("0.05")
+
+    if reproduces_amount(implied) and not reproduces_amount(printed):
+        return implied
+    return None
+
+
 def sha256_of(path: Path) -> str:
     digest = hashlib.sha256()
     with open(path, "rb") as handle:
@@ -34,7 +76,9 @@ def sha256_of(path: Path) -> str:
 
 def parse_pdf(path: Path) -> Invoice:
     document = PdfDocument(path)
-    colmap = match_headers(document.header_row)
+    # The document may have repaired its own column map (unreadable header
+    # recovered arithmetically). Re-deriving here would silently discard that.
+    colmap = document.colmap or match_headers(document.header_row)
     semantics = infer_amount_semantics(document.data_rows, colmap)
 
     gstins = document.gstins()
@@ -55,6 +99,20 @@ def parse_pdf(path: Path) -> Invoice:
         stated_grand_total=document.stated_grand_total(),
         parse_tier=2,
     )
+
+    for note in document.healed:
+        invoice.findings.append(Finding("TIER2_HEALED", "warning", note))
+
+    if not document.data_rows:
+        invoice.findings.append(
+            Finding(
+                "NO_LINE_ITEMS",
+                "blocking",
+                "No line items could be read from this file. The table columns were not "
+                "recognisable, so nothing was extracted. If this is a scanned invoice it needs "
+                "the OCR path; otherwise map this vendor manually.",
+            )
+        )
 
     if not semantics.resolved and semantics.sample_size:
         invoice.findings.append(
@@ -81,6 +139,23 @@ def parse_pdf(path: Path) -> Invoice:
 
         if qty is None or rate is None:
             continue
+
+        recovered = _recover_quantity(
+            qty, rate, gst_pct,
+            parse_money(cell(row, "gst_value")),
+            parse_money(cell(row, "gst_amount")),
+            parse_money(cell(row, "amount")),
+        )
+        if recovered is not None:
+            invoice.findings.append(
+                Finding(
+                    "QTY_RECOVERED", "warning",
+                    f"Quantity reads {qty} but the tax and amount columns are both "
+                    f"computed from {recovered}; using {recovered}. Confirm against "
+                    f"the vendor's copy.",
+                    line_no)
+            )
+            qty = recovered
 
         # Brief §5: vendors leave unordered SKUs in the table at QTY 0. They are
         # not register rows.
