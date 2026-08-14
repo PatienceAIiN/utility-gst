@@ -151,7 +151,11 @@ const api = {
     setGrants: (deviceId: string, grants: Permission[]): Promise<{ ok: boolean; error?: string }> =>
       ipcRenderer.invoke('mesh:setGrants', { deviceId, grants }),
     unpair: (deviceId: string): Promise<MeshStatus> => ipcRenderer.invoke('mesh:unpair', { deviceId }),
-    browse: (deviceId: string): Promise<{ device: string; count: number; items: unknown[] }> =>
+    fetchRecord: (deviceId: string, id: string): Promise<unknown> =>
+      ipcRenderer.invoke('mesh:fetchRecord', { deviceId, id }),
+    browse: (
+      deviceId: string
+    ): Promise<{ device: string; count: number; items: unknown[]; yourGrants: Permission[] }> =>
       ipcRenderer.invoke('mesh:browse', { deviceId }),
     share: (deviceId: string, id: string): Promise<unknown> =>
       ipcRenderer.invoke('mesh:share', { deviceId, id })

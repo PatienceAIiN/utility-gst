@@ -236,6 +236,9 @@ class Mesh {
       const page = history.list({ page: 1, pageSize: 200 })
       return send(200, {
         device: state.deviceName,
+        // What the CALLER is permitted to do here. peer.grants on their side
+        // describes what they allow us, which is the opposite direction.
+        yourGrants: record.grants,
         count: page.total,
         // Deliberately coarse: names and totals only, no line items, no GSTINs.
         items: page.items.map((r) => ({

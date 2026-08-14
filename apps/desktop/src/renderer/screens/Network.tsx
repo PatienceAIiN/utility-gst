@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   Alert, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle,
-  Divider, FormControlLabel, IconButton, MenuItem, Paper, Stack, Switch, TextField, Tooltip,
-  Typography
+  CircularProgress, Divider, FormControlLabel, IconButton, MenuItem, Paper, Stack, Switch, Table, TableBody,
+  TableCell, TableContainer, TableHead, TableRow, TextField, Tooltip, Typography
 } from '@mui/material'
 import LanIcon from '@mui/icons-material/Lan'
 import LinkOffIcon from '@mui/icons-material/LinkOff'
 import RefreshIcon from '@mui/icons-material/Refresh'
-import type { MeshStatus, Permission } from '../../preload/index'
+import type { MeshPeer, MeshStatus, Permission } from '../../preload/index'
 import { Busy, EmptyState, Section, type ConfirmSpec } from '../ui'
 
 /**
@@ -60,10 +60,11 @@ export default function Network({
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
-  const [myCode, setMyCode] = useState<{ device: string; code: string } | null>(null)
+  const [myCode, setMyCode] = useState<{ device: string; deviceId: string; code: string } | null>(null)
   const [approving, setApproving] = useState<{ deviceId: string; name: string } | null>(null)
   const [codeEntry, setCodeEntry] = useState('')
   const [name, setName] = useState('')
+  const [browsing, setBrowsing] = useState<MeshPeer | null>(null)
 
   const refresh = useCallback(async () => {
     try {
@@ -80,6 +81,17 @@ export default function Network({
     const timer = setInterval(() => void refresh(), 4000)
     return () => clearInterval(timer)
   }, [refresh])
+
+  // Dismiss the pairing code the moment the far side approves: it is spent, and
+  // a stale secret left on screen is worse than no feedback at all.
+  useEffect(() => {
+    if (!myCode || !status) return
+    const peer = status.peers.find((p) => p.deviceId === myCode.deviceId)
+    if (peer?.paired) {
+      setMyCode(null)
+      setNotice(`${peer.name} is connected. Set what they may do below.`)
+    }
+  }, [status, myCode])
 
   const enabled = status?.enabled === true
 
@@ -224,7 +236,11 @@ export default function Network({
                           try {
                             const result = await window.api.mesh.requestPair(peer.deviceId)
                             if (result.ok && result.code) {
-                              setMyCode({ device: peer.name, code: result.code })
+                              setMyCode({
+                                device: peer.name,
+                                deviceId: peer.deviceId,
+                                code: result.code
+                              })
                             } else {
                               setError(result.error ?? 'Could not reach that device.')
                             }
@@ -239,16 +255,8 @@ export default function Network({
                       <>
                         <Button
                           size="small"
-                          disabled={!peer.grants.includes('view') || !peer.address}
-                          onClick={async () => {
-                            setError(null)
-                            try {
-                              const data = await window.api.mesh.browse(peer.deviceId)
-                              setNotice(`${peer.name} has ${data.count} record(s).`)
-                            } catch (e) {
-                              setError(e instanceof Error ? e.message : 'Could not read that device.')
-                            }
-                          }}
+                          disabled={!peer.address}
+                          onClick={() => setBrowsing(peer)}
                         >
                           Browse
                         </Button>
@@ -328,6 +336,12 @@ export default function Network({
             Read it out rather than sending it over chat. Matching the code is what proves the two
             computers are the ones you intend to connect.
           </Typography>
+          <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 2 }}>
+            <CircularProgress size={14} />
+            <Typography variant="caption" color="text.secondary">
+              Waiting for them to approve — this closes by itself.
+            </Typography>
+          </Stack>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
           <Button variant="contained" onClick={() => setMyCode(null)}>
@@ -335,6 +349,8 @@ export default function Network({
           </Button>
         </DialogActions>
       </Dialog>
+
+      <BrowseDialog peer={browsing} onClose={() => setBrowsing(null)} />
 
       {/* Approving an incoming request */}
       <Dialog open={approving !== null} onClose={() => setApproving(null)} maxWidth="xs" fullWidth>
@@ -379,5 +395,272 @@ export default function Network({
         </DialogActions>
       </Dialog>
     </Box>
+  )
+}
+
+interface RemoteRecord {
+  id: string
+  invoiceNo: string | null
+  invoiceDate: string | null
+  rows: number
+  blocked: boolean
+}
+
+/**
+ * Browsing a paired device.
+ *
+ * What is shown depends on the level THAT device granted us, and the failure is
+ * reported plainly: an empty list because permission was withheld reads very
+ * differently from an empty list because nothing has been imported.
+ */
+function BrowseDialog({
+  peer,
+  onClose
+}: {
+  peer: MeshPeer | null
+  onClose: () => void
+}): JSX.Element {
+  const [items, setItems] = useState<RemoteRecord[] | null>(null)
+  const [grants, setGrants] = useState<Permission[]>([])
+  const [device, setDevice] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [detail, setDetail] = useState<Record<string, unknown> | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [sharing, setSharing] = useState(false)
+
+  useEffect(() => {
+    if (!peer) {
+      setItems(null)
+      setError(null)
+      setDetail(null)
+      setGrants([])
+      return
+    }
+    setLoading(true)
+    setError(null)
+    window.api.mesh
+      .browse(peer.deviceId)
+      .then((data) => {
+        setItems((data.items ?? []) as RemoteRecord[])
+        setGrants((data.yourGrants ?? []) as Permission[])
+        setDevice(data.device ?? peer.name)
+      })
+      .catch((e: unknown) =>
+        setError(e instanceof Error ? e.message : 'Could not read that device.')
+      )
+      .finally(() => setLoading(false))
+  }, [peer])
+
+  const money = (v: unknown): string =>
+    v == null || v === ''
+      ? '—'
+      : Number(v).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+  return (
+    <Dialog open={peer !== null} onClose={onClose} maxWidth="md" fullWidth scroll="paper">
+      <DialogTitle>
+        <Stack direction="row" alignItems="center" spacing={1.5}>
+          <span>{device || peer?.name}</span>
+          <Chip
+            size="small"
+            color={grants.includes('write') ? 'success' : grants.length ? 'primary' : 'default'}
+            label={
+              grants.includes('write')
+                ? 'Read and write'
+                : grants.includes('read')
+                  ? 'Read'
+                  : grants.includes('view')
+                    ? 'View only'
+                    : 'No access'
+            }
+          />
+        </Stack>
+      </DialogTitle>
+      <DialogContent dividers>
+        <Busy show={loading} label="Reading…" />
+        {items && !grants.includes('read') && !error && (
+          <Alert severity="info" sx={{ mb: 2 }}>
+            You have view-only access, so records cannot be opened. Ask them to raise your access
+            level on their computer.
+          </Alert>
+        )}
+        {error && (
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            {error}
+            {error.toLowerCase().includes('permission') && (
+              <> — ask them to raise your access level on their computer.</>
+            )}
+          </Alert>
+        )}
+
+        {detail ? (
+          <Box>
+            <Button size="small" onClick={() => setDetail(null)} sx={{ mb: 2 }}>
+              ← Back to list
+            </Button>
+            <Stack spacing={1}>
+              {(
+                [
+                  ['Invoice', detail['invoiceNo']],
+                  ['Date', detail['invoiceDate']],
+                  ['Party', detail['party']],
+                  ['GSTIN', detail['gstin']],
+                  ['Rows', detail['rows']],
+                  ['Taxable', money(detail['taxable'])],
+                  ['Tax', money(detail['taxTotal'])],
+                  ['Grand total', money(detail['grandTotal'])]
+                ] as [string, unknown][]
+              ).map(([label, value]) => (
+                <Stack key={label} direction="row" spacing={2}>
+                  <Typography variant="body2" color="text.secondary" sx={{ minWidth: 110 }}>
+                    {label}
+                  </Typography>
+                  <Typography variant="body2">{String(value ?? '—')}</Typography>
+                </Stack>
+              ))}
+            </Stack>
+          </Box>
+        ) : items && items.length === 0 && !error ? (
+          <Typography variant="body2" color="text.secondary">
+            That computer has not processed any invoices yet.
+          </Typography>
+        ) : (
+          items && (
+            <TableContainer sx={{ maxHeight: '55vh' }}>
+              <Table size="small" stickyHeader>
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Invoice</TableCell>
+                    <TableCell>Date</TableCell>
+                    <TableCell align="right">Rows</TableCell>
+                    <TableCell>Status</TableCell>
+                    <TableCell align="right" />
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {items.map((record) => (
+                    <TableRow key={record.id} hover>
+                      <TableCell>{record.invoiceNo ?? '—'}</TableCell>
+                      <TableCell>{record.invoiceDate ?? '—'}</TableCell>
+                      <TableCell align="right">{record.rows}</TableCell>
+                      <TableCell>
+                        <Chip
+                          size="small"
+                          color={record.blocked ? 'error' : 'success'}
+                          label={record.blocked ? 'Needs review' : 'Ties out'}
+                        />
+                      </TableCell>
+                      <TableCell align="right">
+                        <Button
+                          size="small"
+                          disabled={!grants.includes('read')}
+                          onClick={async () => {
+                            if (!peer) return
+                            setError(null)
+                            try {
+                              const full = await window.api.mesh.fetchRecord(peer.deviceId, record.id)
+                              setDetail(full as Record<string, unknown>)
+                            } catch (e) {
+                              setError(
+                                e instanceof Error
+                                  ? `${e.message} You may only have "View only" access.`
+                                  : 'Could not open that record.'
+                              )
+                            }
+                          }}
+                        >
+                          Open
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          )
+        )}
+      </DialogContent>
+      <DialogActions sx={{ px: 3, pb: 2 }}>
+        {grants.includes('write') && (
+          <Button
+            sx={{ mr: 'auto' }}
+            onClick={() => setSharing(true)}
+          >
+            Send a record to {device || peer?.name}
+          </Button>
+        )}
+        <Button variant="contained" onClick={onClose}>
+          Close
+        </Button>
+      </DialogActions>
+      {peer && <ShareDialog open={sharing} peer={peer} onClose={() => setSharing(false)} />}
+    </Dialog>
+  )
+}
+
+/** Push one of our own records to a peer that granted write access. */
+function ShareDialog({
+  open,
+  peer,
+  onClose
+}: {
+  open: boolean
+  peer: MeshPeer
+  onClose: () => void
+}): JSX.Element {
+  const [mine, setMine] = useState<{ id: string; invoiceNo: string | null; rows: number }[]>([])
+  const [sent, setSent] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!open) return
+    void window.api.history.list({ page: 1, pageSize: 100 }).then((page) =>
+      setMine(page.items.map((r) => ({ id: r.id, invoiceNo: r.invoiceNo, rows: r.rows })))
+    )
+  }, [open])
+
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
+      <DialogTitle>Send to {peer.name}</DialogTitle>
+      <DialogContent dividers>
+        {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+        {sent && <Alert severity="success" sx={{ mb: 2 }}>Sent {sent}.</Alert>}
+        <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1.5 }}>
+          The record appears in their History, tagged as received from this computer.
+        </Typography>
+        {mine.length === 0 ? (
+          <Typography variant="body2" color="text.secondary">
+            You have no records to send yet.
+          </Typography>
+        ) : (
+          <Stack spacing={1}>
+            {mine.map((record) => (
+              <Stack key={record.id} direction="row" alignItems="center" spacing={1}>
+                <Typography variant="body2" sx={{ flexGrow: 1 }}>
+                  {record.invoiceNo ?? record.id.slice(0, 8)} · {record.rows} rows
+                </Typography>
+                <Button
+                  size="small"
+                  onClick={async () => {
+                    setError(null)
+                    try {
+                      await window.api.mesh.share(peer.deviceId, record.id)
+                      setSent(record.invoiceNo ?? 'record')
+                    } catch (e) {
+                      setError(e instanceof Error ? e.message : 'Could not send.')
+                    }
+                  }}
+                >
+                  Send
+                </Button>
+              </Stack>
+            ))}
+          </Stack>
+        )}
+      </DialogContent>
+      <DialogActions sx={{ px: 3, pb: 2 }}>
+        <Button variant="contained" onClick={onClose}>Close</Button>
+      </DialogActions>
+    </Dialog>
   )
 }

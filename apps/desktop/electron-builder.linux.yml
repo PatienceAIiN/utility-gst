@@ -41,12 +41,11 @@ linux:
       Name: Utility
       Comment: GST invoice digitisation by Patience AI
       Categories: Office;Finance;
-  # Both rpm and deb need the sandbox helper made setuid root after unpacking;
-  # electron-builder does not do it, and Electron will not start without it.
+deb:
+  # The sandbox helper must be setuid root after unpacking or Electron refuses
+  # to start. electron-builder does not do this for deb or rpm.
   afterInstall: build/linux-after-install.sh
   afterRemove: build/linux-after-remove.sh
-
-deb:
   # Same dependency set as the rpm target; electron-builder does not infer one
   # from the other.
   depends:
@@ -61,6 +60,8 @@ deb:
     - libasound2
 
 rpm:
+  afterInstall: build/linux-after-install.sh
+  afterRemove: build/linux-after-remove.sh
   # rpmbuild strips and re-links by default, which corrupts the PyInstaller
   # bundle's embedded loader. Leave the payload alone.
   fpm: ["--rpm-tag", "%define _build_id_links none"]

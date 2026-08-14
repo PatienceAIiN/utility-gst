@@ -548,6 +548,10 @@ function registerIpc(): void {
     mesh.unpair(DeviceId.parse(raw).deviceId)
     return mesh.status()
   })
+  ipcMain.handle('mesh:fetchRecord', (_event, raw: unknown) => {
+    const { deviceId, id } = DeviceId.extend({ id: z.string().min(1).max(64) }).parse(raw)
+    return mesh.fetchRecord(deviceId, id)
+  })
   ipcMain.handle('mesh:browse', (_event, raw: unknown) => mesh.browse(DeviceId.parse(raw).deviceId))
   ipcMain.handle('mesh:share', (_event, raw: unknown) => {
     const { deviceId, id } = DeviceId.extend({ id: z.string().uuid() }).parse(raw)
